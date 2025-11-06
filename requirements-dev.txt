@@ -1,0 +1,4 @@
+pytest
+pettingzoo
+gymnasium
+numpy

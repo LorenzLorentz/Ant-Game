@@ -1,0 +1,30 @@
+image: python:3.11-slim
+
+stages:
+  - test
+
+variables:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_CACHE_DIR: "1"
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .venv/
+
+before_script:
+  - python -m venv .venv
+  - . .venv/bin/activate
+  - python -m pip install -U pip
+  - pip install -r requirements-dev.txt
+
+unit_tests:
+  stage: test
+  script:
+    - . .venv/bin/activate
+    - pytest -q
+  artifacts:
+    when: always
+    paths:
+      - replays/
+    expire_in: 1 week
