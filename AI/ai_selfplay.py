@@ -36,7 +36,7 @@ class SmallPolicy(nn.Module):  # type: ignore[misc]
         inp = row * col * 4 + 2 + 2 + 1
         hid = 256
         self.net = nn.Sequential(
-            nn.Linear(inp, hid), nn.ReLU(), nn.Linear(hid, hid), nn.ReLU(), nn.Linear(hid, 5)
+            nn.Linear(inp, hid), nn.ReLU(), nn.Linear(hid, hid), nn.ReLU(), nn.Linear(hid, 9 + row + col + 4 + 5 + 10)
         )
 
     def forward(self, x):
@@ -81,13 +81,68 @@ def _obs_to_tensor(obs) -> np.ndarray:
     return feat
 
 
-def _pick_action(policy: SmallPolicy, obs) -> int:
+def _pick_action(policy: SmallPolicy, obs) -> np.ndarray:
     x = torch.from_numpy(_obs_to_tensor(obs)).float().unsqueeze(0)
     with torch.no_grad():
         logits = policy(x)[0]
-        probs = torch.softmax(logits, dim=-1)
-        a = torch.distributions.Categorical(probs).sample()
-        return int(a.item())
+        # Use similar logic as logits_to_action
+        type_logits = logits[:9]
+        x_logits = logits[9:9+row]
+        y_logits = logits[9+row:9+row+col]
+        dir_logits = logits[9+row+col:9+row+col+4]
+        num_logits = logits[9+row+col+4:9+row+col+4+5]
+        gid_logits = logits[9+row+col+4+5:]
+
+        type_probs = torch.softmax(type_logits, dim=-1)
+        atype = torch.multinomial(type_probs, 1).item()
+
+        act = np.zeros(8, dtype=np.int64)
+        if atype == 0:
+            act[0] = 0
+            return act
+
+        act[0] = atype
+
+        x_probs = torch.softmax(x_logits, dim=-1)
+        x = torch.multinomial(x_probs, 1).item()
+        y_probs = torch.softmax(y_logits, dim=-1)
+        y = torch.multinomial(y_probs, 1).item()
+        dir_probs = torch.softmax(dir_logits, dim=-1)
+        d = torch.multinomial(dir_probs, 1).item()
+        num_probs = torch.softmax(num_logits, dim=-1)
+        n = torch.multinomial(num_probs, 1).item() + 1
+        gid_probs = torch.softmax(gid_logits, dim=-1)
+        gid = torch.multinomial(gid_probs, 1).item()
+
+        if atype == 1:  # ArmyMove
+            act[1] = x
+            act[2] = y
+            act[3] = d + 1
+            act[4] = n
+        elif atype == 2:  # GeneralMove
+            act[1] = gid
+            act[2] = x
+            act[3] = y
+        elif atype == 3:  # LevelUp
+            act[1] = gid
+            act[2] = (d % 3) + 1
+        elif atype == 4:  # GeneralSkill
+            act[1] = gid
+            act[2] = (d % 2) + 1
+            act[3] = x
+            act[4] = y
+        elif atype == 5:  # TechUpdate
+            act[1] = d
+        elif atype == 6:  # SuperWeapon
+            act[1] = (d % 4) + 1
+            act[2] = x
+            act[3] = y
+        elif atype == 7:  # CallGenerals
+            act[1] = x
+            act[2] = y
+        elif atype == 8:  # GiveUp
+            pass
+        return act
 
 
 def _main_gen(state: GameState, player: int):
@@ -110,15 +165,10 @@ def policy(round_idx: int, my_seat: int, state: GameState) -> List[List[int]]:
         _POLICY.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
         _POLICY.eval()
     obs = _build_obs(state, my_seat)
-    action_id = _pick_action(_POLICY, obs)  # type: ignore[arg-type]
+    action_vector = _pick_action(_POLICY, obs)  # type: ignore[arg-type]
     # Map to commands
-    if action_id == 0:
+    if action_vector[0] == 0:
         return [[8]]
-    g = _main_gen(state, my_seat)
-    if not g:
-        return [[8]]
-    dir_map = {1: Direction.UP, 2: Direction.DOWN, 3: Direction.LEFT, 4: Direction.RIGHT}
-    d = dir_map.get(action_id, Direction.UP)
-    op = [1, g.position[0], g.position[1], int(d) + 1, 1]
-    return [op, [8]]
+    else:
+        return [action_vector.tolist(), [8]]
 

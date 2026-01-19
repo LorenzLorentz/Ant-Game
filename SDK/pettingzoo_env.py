@@ -155,9 +155,9 @@ class GeneralsAECEnv(AECEnv):
             params = self._decode_params(atype, action)
             success = execute_single_command(player, self._state, atype, params)
 
-        # Optional small penalty for invalid actions
+        # 更大惩罚：非法操作直接-1
         if not success:
-            self.rewards[agent] = -0.01
+            self.rewards[agent] = -1.0
 
         # Check for round/end handling
         winner = is_game_over(self._state)
