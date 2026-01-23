@@ -1,9 +1,8 @@
 import copy
+from logic.constant import row, col
 
 
-def get_single_round_replay(
-    gamestate, cells: list[list[int, int]], player: int, action: list
-):
+def get_single_round_replay(gamestate, cells: list[list[int, int]], player: int, action: list):
     replay = {
         "Round": gamestate.round,
         "Player": player,
@@ -11,6 +10,7 @@ def get_single_round_replay(
         "Cells": [],
         "Generals": [],
     }
+
     replay["Weapons"] = [
         {
             "Type": int(weapon.type) + 1,
@@ -20,6 +20,7 @@ def get_single_round_replay(
         }
         for weapon in gamestate.active_super_weapon
     ]
+
     for cell in cells:
         replay["Cells"].append(
             [
@@ -28,11 +29,15 @@ def get_single_round_replay(
                 gamestate.board[cell[0]][cell[1]].army,
             ]
         )
+
     replay["Weapon_cds"] = gamestate.super_weapon_cd
+
     replay["Tech_level"] = copy.deepcopy(gamestate.tech_level)
     replay["Tech_level"][0][0] = (gamestate.tech_level[0][0] + 1) // 2
     replay["Tech_level"][1][0] = (gamestate.tech_level[1][0] + 1) // 2
+
     replay["Coins"] = gamestate.coin
+
     for general in gamestate.generals:
         replay["Generals"].append(
             {
@@ -57,5 +62,12 @@ def get_single_round_replay(
                 replay["Generals"][-1]["Level"][1] = 2
             elif general.defense_level == 2 or general.defense_level == 3:
                 replay["Generals"][-1]["Level"][1] = general.defense_level + 1
-        replay["Cell_type"] = ""
+
+    # FIX: 生成真实 Cell_type, 不要在循环里反复置空
+    cell_type = []
+    for i in range(row):
+        for j in range(col):
+            cell_type.append(str(int(gamestate.board[i][j].type)))
+    replay["Cell_type"] = "".join(cell_type)
+
     return replay
