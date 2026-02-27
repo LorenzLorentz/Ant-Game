@@ -53,7 +53,7 @@ class Direction(IntEnum):
 
 
 def init_coin():
-    return 0
+    return 50
 
 
 def init_cell_type():
@@ -137,9 +137,9 @@ class SubGenerals(Generals):
 
 @dataclass
 class Cell:
-    position: list[int, int] = field(default_factory=lambda: [0, 0])
+    position: list[int] = field(default_factory=lambda: [0, 0])
     type: CellType = field(default_factory=init_cell_type)
     player: int = -1
-    generals: Generals = None
+    generals: Generals | None = None
     weapon_activate: list[SuperWeapon] = field(default_factory=list)
     army: int = 0  # 格子上的军队数目

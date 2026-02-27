@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en-us">
+
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>Container</title>
+</head>
+
+<body>
+  <iframe src="player.html" height="900" width="1600" id="player">
+  </iframe>
+  <div id="GamePlay buttons">
+    <button id="play-button">Play</button>
+    <input type="checkbox" id="guest-mode" checked> Guest </input>
+    <button id="replay-button">Replay</button>
+    <button id="spectate-button">Spectate</button>
+    <button id="save-button">Save</button>
+    <button id="next-frame-button"> >> </button>
+    <label id ="__frame_cnt"></label>
+    <input/>
+  </div>
+  <div id="DebugButtons">
+    Ant: (
+    <input id="ant_x" type="text"></input>
+    , 
+    <input id="ant_y" type="text"></input>
+    )
+    <button id="Spawn_Ant"> Spawn Ant </button>
+  Ant ID:
+  <input id="Del_ant_id" type="text"></input>
+  <button id="Del_Ant"> Delete Ant </button>
+  <button id="Max_Coins"> Max Coins </button>
+  <input id="Mitigate_Logic" type="checkbox" checked>Mitigate Logic</input>
+  </div>
+  <script>
+    const player = document.querySelector('#player')
+    var replayBtn = document.querySelector('#replay-button');
+    var nextFrameBtn = document.querySelector('#next-frame-button');
+    var saveBtn = document.querySelector('#save-button');
+    var playBtn = document.querySelector('#play-button');
+    var spectateBtn = document.querySelector('#spectate-button');
+    var frame_cnt_label = document.querySelector('#__frame_cnt');
+    var guestCheckBox = document.getElementById("guest-mode");
+    var SpawnAnt = document.querySelector('#Spawn_Ant')
+      var DelAnt = document.querySelector('#Del_Ant')
+      var MaxCoins = document.querySelector('#Max_Coins')
+      var AntX = document.querySelector('#ant_x')
+      var AntY = document.querySelector('#ant_y')
+      var Mitigate_Logic = document.querySelector('#Mitigate_Logic')
+      var Del_ant_id = document.querySelector('#Del_ant_id')
+
+    var framecnt = 0
+    var currframe = 1
+    nextFrameBtn.onclick = () => {
+      if(currframe >= framecnt) return
+      SendToChild({
+        message: 'load_next_frame'
+      })
+      currframe++
+      frame_cnt_label.innerHTML = currframe + ' / ' + framecnt
+    };
+
+    saveBtn.onclick = () => {
+      SendToChild({
+        message: 'save_result'
+      })
+    };
+
+    playBtn.onclick = () => {
+      SendToChild({
+        message: 'init_player_player',
+        token: guestCheckBox.checked ? 'MTI3LjAuMC4xOjIzMDAx' : 'MTI3LjAuMC4xOjIzMDAw'
+      })
+    };
+
+    spectateBtn.onclick = () => {
+      SendToChild({
+        message: 'init_spectator_player',
+        token: 'MTI3LjAuMC4xOjg3NjU='
+      })
+    };
+
+    replayBtn.onclick = () => {
+      var input = document.createElement('input');
+      input.type = 'file';
+
+      input.onchange = e => { 
+
+        // getting a hold of the file reference
+        var file = e.target.files[0]; 
+        SendToChild({
+          message: "init_replay_player",
+          replay_data: file
+        })
+      }
+
+      input.click();
+    }
+    const SendToChild = payload =>
+    player.contentWindow.postMessage(payload)
+    let tokenB64 = null
+    let ws = null
+    window.onmessage = event => {
+      const payload = event.data
+      console.log(payload)
+      switch(payload.message) {
+        case 'init_successfully':
+          framecnt = payload.number_of_frames
+          frame_cnt_label.innerHTML = '1 / ' + framecnt
+          break
+        case 'resized':
+          player.height = payload.height
+          break
+        case 'setB64':
+          ws = payload.socket
+          tokenB64 = payload.token
+          break
+        default:
+          console.error('Type ' + payload.message + ' not implemented')
+          break 
+      }
+    }
+    SpawnAnt.onclick = () => {
+        const content = [{
+          id: -1,
+          type: Mitigate_Logic.checked ? 7: 91,
+          pos: {
+            x: Number(AntX.value),
+            y: Number(AntY.value),
+          },
+          args: -1,
+        }]
+        const str_content = JSON.stringify(content)
+        const send_packet = {
+          message: 'ToSocket',
+          request: 'action',
+          token: tokenB64,
+          content: str_content
+        }
+        SendToChild(send_packet)
+      }
+      DelAnt.onclick = () => {
+        const content = [{
+          id: Number(Del_ant_id.value),
+          type: Mitigate_Logic.checked ? 8: 92,
+          pos: {
+            x: -1,
+            y: -1,
+          },
+          args: -1,
+        }]
+        const str_content = JSON.stringify(content)
+        const send_packet = {
+          message: 'ToSocket',
+          request: 'action',
+          token: tokenB64,
+          content: str_content
+        }
+        SendToChild(send_packet)
+      }
+      MaxCoins.onclick = () => {
+        const content = [{
+          id: -1,
+          type: Mitigate_Logic.checked ? 9: 93,
+          pos: {x: -1, y: -1},
+          args: -1,
+        }]
+        const str_content = JSON.stringify(content)
+        const send_packet = {
+          message: 'ToSocket',
+          request: 'action',
+          token: tokenB64,
+          content: str_content
+        }
+        SendToChild(send_packet)
+      }
+  </script>
+</body>
+
+</html>

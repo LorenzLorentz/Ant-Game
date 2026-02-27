@@ -141,17 +141,23 @@ class GameState:
 
     def _build_pheromone(self) -> list:
         """
-        pheromone: [2][row][col]
+        pheromone: [2][H][W]
         用“占领格 army 强度”派生：己方占领则为 army，否则 0。
         """
+        # Frontend uses indices up to 18, so keep at least 19x19.
+        target_h = max(row, 19)
+        target_w = max(col, 19)
         pheromone = []
         for p in (0, 1):
             grid = []
-            for i in range(row):
+            for i in range(target_h):
                 line = []
-                for j in range(col):
-                    c = self.board[i][j]
-                    line.append(int(c.army) if c.player == p else 0)
+                for j in range(target_w):
+                    if i < row and j < col:
+                        c = self.board[i][j]
+                        line.append(int(c.army) if c.player == p else 0)
+                    else:
+                        line.append(0)
                 grid.append(line)
             pheromone.append(grid)
         return pheromone
@@ -192,6 +198,30 @@ class GameState:
                     camps[p] = int(self.board[x][y].army)
                     break
         return camps
+
+    def _build_towers_full(self) -> list:
+        towers = []
+        for g in self.generals:
+            if g.player == -1:
+                continue
+            x, y = g.position
+            ttype = 0 if isinstance(g, MainGenerals) else (1 if isinstance(g, SubGenerals) else 2)
+
+            cd = 0
+            try:
+                positives = [int(v) for v in getattr(g, "skills_cd", []) if int(v) > 0]
+                cd = min(positives) if positives else 0
+            except Exception:
+                cd = 0
+
+            towers.append({
+                "cd": int(cd),
+                "id": int(g.id),
+                "player": int(g.player),
+                "pos": {"x": int(x), "y": int(y)},
+                "type": int(ttype),
+            })
+        return towers
 
     def _build_towers_delta(self) -> list:
         """
@@ -252,7 +282,7 @@ class GameState:
             "message": "[,]",
             "pheromone": self._build_pheromone(),
             "speedLv": speedLv,
-            "towers": self._build_towers_delta(),
+            "towers": self._build_towers_full(),
             "winner": int(self.winner),
         }
         return rs
@@ -303,6 +333,7 @@ def init_generals(gamestate: GameState):
         gamestate.generals.append(gen)
         gamestate.board[pos[0]][pos[1]].generals = gen
         gamestate.board[pos[0]][pos[1]].player = player
+        gamestate.board[pos[0]][pos[1]].army = 50
 
     # generate sub generals
     for player in range(subgen_num):
@@ -396,6 +427,9 @@ def update_round(gamestate: GameState):
     _ = get_single_round_replay(gamestate, [[int(i / col), i % col] for i in changed], -1, [8])
 
     gamestate.active_super_weapon = list(filter(lambda x: (x.rest > 0), gamestate.active_super_weapon))
+
+    gamestate.coin[0] += 1
+    gamestate.coin[1] += 1
 
     # 在回合数+1之前写入 AntWar replay frame
     gamestate.append_ant_replay_frame(force=False)
