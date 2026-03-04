@@ -10,3 +10,7 @@ build/
 _main.py
 __main.py
 *.json
+AI/include
+AI/ai_handcraft.cpp
+AI/ai_handcraft.py
+AI/zip_handcraft.sh

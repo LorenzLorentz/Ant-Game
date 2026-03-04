@@ -3,7 +3,7 @@ import math
 from logic.computation import compute_attack, compute_defence
 from logic.constant import *
 from logic.gamedata import CellType, Direction, WeaponType
-from logic.generate_round_replay import get_single_round_replay
+from logic.generate_round_replay import append_replay_line, get_single_round_replay, replay_enabled
 
 # 本文件用于实现将军和军队的移动逻辑
 
@@ -121,12 +121,11 @@ def army_move(
             gamestate.board[newX][newY].army = 0
             gamestate.board[x][y].army -= num
     gamestate.rest_move_step[player] -= 1
-    replay = get_single_round_replay(
-        gamestate, [[x, y], [newX, newY]], player, [1, x, y, int(direction) + 1, num]
-    )
-    with open(gamestate.replay_file, "a") as f:
-        f.write(str(replay).replace("'", '"') + "\n")
-    f.close()
+    if replay_enabled(gamestate):
+        replay = get_single_round_replay(
+            gamestate, [[x, y], [newX, newY]], player, [1, x, y, int(direction) + 1, num]
+        )
+        append_replay_line(gamestate, replay)
 
     return True
 
@@ -149,10 +148,9 @@ def general_move(
     id = gamestate.board[newX][newY].generals.id
     gamestate.board[x][y].generals = None
 
-    replay = get_single_round_replay(gamestate, [], player, [2, id, newX, newY])
-    with open(gamestate.replay_file, "a") as f:
-        f.write(str(replay).replace("'", '"') + "\n")
-    f.close()
+    if replay_enabled(gamestate):
+        replay = get_single_round_replay(gamestate, [], player, [2, id, newX, newY])
+        append_replay_line(gamestate, replay)
     return True
 
 

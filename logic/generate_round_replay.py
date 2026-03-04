@@ -2,6 +2,17 @@ import copy
 from logic.constant import row, col
 
 
+def replay_enabled(gamestate) -> bool:
+    return not getattr(gamestate, "disable_replay", False)
+
+
+def append_replay_line(gamestate, replay: dict) -> None:
+    if not replay_enabled(gamestate):
+        return
+    with open(gamestate.replay_file, "a") as f:
+        f.write(str(replay).replace("'", '"') + "\n")
+
+
 def get_single_round_replay(gamestate, cells: list[list[int, int]], player: int, action: list):
     replay = {
         "Round": gamestate.round,

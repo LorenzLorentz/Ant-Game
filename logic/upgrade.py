@@ -1,6 +1,6 @@
 import logic.constant as constant
 from logic.gamedata import *
-from logic.generate_round_replay import get_single_round_replay
+from logic.generate_round_replay import append_replay_line, get_single_round_replay, replay_enabled
 
 
 # 本文件中的函数负责升级将军，解锁技能等，需要的金币从demo里的constant.py中调取，方便修改
@@ -84,14 +84,14 @@ def production_up(location: list[int, int], gamestate, player: int) -> bool:
                 gamestate.coin[player] -= constant.lieutenant_production_T2
         else:
             return False
-    replay = get_single_round_replay(
-        gamestate,
-        [],
-        player,
-        [3, gamestate.board[location[0]][location[1]].generals.id, 1],
-    )
-    with open(gamestate.replay_file, "a") as f:
-        f.write(str(replay).replace("'", '"') + "\n")
+    if replay_enabled(gamestate):
+        replay = get_single_round_replay(
+            gamestate,
+            [],
+            player,
+            [3, gamestate.board[location[0]][location[1]].generals.id, 1],
+        )
+        append_replay_line(gamestate, replay)
     return True
 
 
@@ -173,14 +173,14 @@ def defence_up(location: list[int, int], gamestate, player: int) -> bool:
                 gamestate.coin[player] -= constant.lieutenant_defense_T2
         else:
             return False
-    replay = get_single_round_replay(
-        gamestate,
-        [],
-        player,
-        [3, gamestate.board[location[0]][location[1]].generals.id, 2],
-    )
-    with open(gamestate.replay_file, "a") as f:
-        f.write(str(replay).replace("'", '"') + "\n")
+    if replay_enabled(gamestate):
+        replay = get_single_round_replay(
+            gamestate,
+            [],
+            player,
+            [3, gamestate.board[location[0]][location[1]].generals.id, 2],
+        )
+        append_replay_line(gamestate, replay)
     return True
 
 
@@ -247,14 +247,14 @@ def movement_up(location: list[int, int], gamestate, player: int) -> bool:
                 gamestate.coin[player] -= constant.general_movement_T2
         else:
             return False
-    replay = get_single_round_replay(
-        gamestate,
-        [],
-        player,
-        [3, gamestate.board[location[0]][location[1]].generals.id, 3],
-    )
-    with open(gamestate.replay_file, "a") as f:
-        f.write(str(replay).replace("'", '"') + "\n")
+    if replay_enabled(gamestate):
+        replay = get_single_round_replay(
+            gamestate,
+            [],
+            player,
+            [3, gamestate.board[location[0]][location[1]].generals.id, 3],
+        )
+        append_replay_line(gamestate, replay)
     return True
 
 
@@ -277,11 +277,11 @@ def tech_update(tech_type: int, gamestate, player: int) -> bool:  # 规定0123�
                 gamestate.tech_level[player][0] = 3
                 gamestate.coin[player] -= constant.army_movement_T1
                 gamestate.rest_move_step[player] += 1
-                replay = get_single_round_replay(
-                    gamestate, [], player, [5, tech_type + 1]
-                )
-                with open(gamestate.replay_file, "a") as f:
-                    f.write(str(replay).replace("'", '"') + "\n")
+                if replay_enabled(gamestate):
+                    replay = get_single_round_replay(
+                        gamestate, [], player, [5, tech_type + 1]
+                    )
+                    append_replay_line(gamestate, replay)
                 return True
         elif gamestate.tech_level[player][0] == 3:
             if gamestate.coin[player] < constant.army_movement_T2:
@@ -290,11 +290,11 @@ def tech_update(tech_type: int, gamestate, player: int) -> bool:  # 规定0123�
                 gamestate.tech_level[player][0] = 5
                 gamestate.coin[player] -= constant.army_movement_T2
                 gamestate.rest_move_step[player] += 2
-                replay = get_single_round_replay(
-                    gamestate, [], player, [5, tech_type + 1]
-                )
-                with open(gamestate.replay_file, "a") as f:
-                    f.write(str(replay).replace("'", '"') + "\n")
+                if replay_enabled(gamestate):
+                    replay = get_single_round_replay(
+                        gamestate, [], player, [5, tech_type + 1]
+                    )
+                    append_replay_line(gamestate, replay)
                 return True
         else:
             return False
@@ -305,11 +305,11 @@ def tech_update(tech_type: int, gamestate, player: int) -> bool:  # 规定0123�
             else:
                 gamestate.tech_level[player][1] = 1
                 gamestate.coin[player] -= constant.mountaineering
-                replay = get_single_round_replay(
-                    gamestate, [], player, [5, tech_type + 1]
-                )
-                with open(gamestate.replay_file, "a") as f:
-                    f.write(str(replay).replace("'", '"') + "\n")
+                if replay_enabled(gamestate):
+                    replay = get_single_round_replay(
+                        gamestate, [], player, [5, tech_type + 1]
+                    )
+                    append_replay_line(gamestate, replay)
                 return True
         else:
             return False
@@ -320,11 +320,11 @@ def tech_update(tech_type: int, gamestate, player: int) -> bool:  # 规定0123�
             else:
                 gamestate.tech_level[player][2] = 1
                 gamestate.coin[player] -= constant.swamp_immunity
-                replay = get_single_round_replay(
-                    gamestate, [], player, [5, tech_type + 1]
-                )
-                with open(gamestate.replay_file, "a") as f:
-                    f.write(str(replay).replace("'", '"') + "\n")
+                if replay_enabled(gamestate):
+                    replay = get_single_round_replay(
+                        gamestate, [], player, [5, tech_type + 1]
+                    )
+                    append_replay_line(gamestate, replay)
                 return True
         else:
             return False
@@ -337,11 +337,11 @@ def tech_update(tech_type: int, gamestate, player: int) -> bool:  # 规定0123�
                 gamestate.super_weapon_cd[player] = constant.start_cd
                 gamestate.super_weapon_unlocked[player] = True
                 gamestate.coin[player] -= constant.unlock_super_weapon
-                replay = get_single_round_replay(
-                    gamestate, [], player, [5, tech_type + 1]
-                )
-                with open(gamestate.replay_file, "a") as f:
-                    f.write(str(replay).replace("'", '"') + "\n")
+                if replay_enabled(gamestate):
+                    replay = get_single_round_replay(
+                        gamestate, [], player, [5, tech_type + 1]
+                    )
+                    append_replay_line(gamestate, replay)
                 return True
         else:
             return False

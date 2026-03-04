@@ -1,7 +1,7 @@
 from logic.gamedata import *
 import logic.constant as constant
 from logic.constant import row, col
-from logic.generate_round_replay import get_single_round_replay
+from logic.generate_round_replay import append_replay_line, get_single_round_replay, replay_enabled
 
 # use gamestate.map.is_valid later
 
@@ -49,10 +49,9 @@ def call_generals(state, player: int, position: list[int, int]) -> bool:
     state.next_generals_id += 1
     # pay the computed cost
     state.coin[player] -= build_cost
-    replay = get_single_round_replay(state, [], player, [7, position[0], position[1]])
-    with open(state.replay_file, "a") as f:
-        f.write(str(replay).replace("'", '"') + "\n")
-    f.close()
+    if replay_enabled(state):
+        replay = get_single_round_replay(state, [], player, [7, position[0], position[1]])
+        append_replay_line(state, replay)
     return True
 
 
@@ -101,8 +100,7 @@ def downgrade_tower(state, player: int, tower_id: int) -> bool:
         state.generals.remove(target)
     state.coin[player] += refund
 
-    replay = get_single_round_replay(state, [], player, [13, tower_id])
-    with open(state.replay_file, "a") as f:
-        f.write(str(replay).replace("'", '"') + "\n")
-    f.close()
+    if replay_enabled(state):
+        replay = get_single_round_replay(state, [], player, [13, tower_id])
+        append_replay_line(state, replay)
     return True

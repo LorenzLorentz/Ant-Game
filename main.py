@@ -297,7 +297,7 @@ def main() -> int:
                 forward_raw_to_ai(pid, f"{pid} {seed}")
 
         # time limits
-        TIME_LIMIT_AI = 3.0
+        TIME_LIMIT_AI = 5.0
         TIME_LIMIT_WEB = 180.0
         MAX_LEN = 2048
 
