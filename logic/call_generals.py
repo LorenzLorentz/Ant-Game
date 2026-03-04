@@ -12,8 +12,12 @@ def call_generals(state, player: int, position: list[int, int]) -> bool:
         return False
     if not getattr(state, "map", None) or not state.map.is_valid(position[0], position[1]):
         return False
-    # calculate tower build cost: 15 × 2^i (i = existing towers owned)
-    towers = [g for g in state.generals if g.player == player]
+    # calculate tower build cost: 15 × 2^i (i = existing towers owned).
+    # Only built sub-generals count as towers; main generals must not inflate
+    # the first tower's price.
+    towers = [
+        g for g in state.generals if g.player == player and isinstance(g, SubGenerals)
+    ]
     i = len(towers)
     build_cost = 15 * (2 ** i)
     if state.coin[player] < build_cost:

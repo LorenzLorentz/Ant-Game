@@ -21,17 +21,16 @@ def test_production_up_farmer_and_generals(plain_state):
     # No further upgrades
     assert production_up([1, 1], s, 0) is False
 
-    # Main general halves cost path
+    # Main general follows the base upgrade path: 1 -> 2 -> 3.
     main = place_general(s, "main", 2, 2, 0)
     main.produce_level = 1
-    s.coin[0] = 200
+    s.coin[0] = 500
     assert production_up([2, 2], s, 0) is True
     assert main.produce_level == 2
-    # cost should have been halved; check coin just dropped
-    assert s.coin[0] == 200 - constant.lieutenant_production_T1 // 2
+    assert s.coin[0] == 500 - constant.base_upgrade_speed_T1
     assert production_up([2, 2], s, 0) is True
-    assert main.produce_level == 4
-    assert s.coin[0] == 200 - constant.lieutenant_production_T1 // 2 - constant.lieutenant_production_T2 // 2
+    assert main.produce_level == 3
+    assert s.coin[0] == 500 - constant.base_upgrade_speed_T1 - constant.base_upgrade_speed_T2
     assert production_up([2, 2], s, 0) is False
 
     # Sub general full cost path. need plenty of coins since upgrade
@@ -137,4 +136,3 @@ def test_tech_update_paths(plain_state):
     assert s.super_weapon_unlocked[0] is True
     assert s.super_weapon_cd[0] >= 0
     assert tech_update(3, s, 0) is False
-

@@ -78,7 +78,7 @@ def test_recv_ai_msg_and_round_messages(monkeypatch):
     monkeypatch.setattr(sys, "stdin", fake_in, raising=False)
     monkeypatch.setattr(sys, "stdout", fake_out, raising=False)
 
-    got = m.recv_ai_msg()
+    got = m.recv_player_msg()
     assert got == ai_msg
 
     # Verify round config and round message are correctly framed and targeted (-1)
@@ -127,7 +127,7 @@ def test_parse_ops_lines_appends_end_and_stops():
     import main as m
 
     text = "1 0 0 1 1\n2 1 1 3\n8\n1 0 0 1 1\n"
-    ops = m.parse_ops_lines(text)
+    ops = m.parse_ai_text_ops(text)
     # Should stop at the first 8 and not include any following lines
     assert ops[-1] == [8]
     assert all(isinstance(op, list) for op in ops)

@@ -58,9 +58,10 @@ def test_skill_consumes_coins_and_updates_tower_cd(tmp_path):
     frames = _read_ant_frames(s.replay_file)
     last = frames[-1]
     towers = last["round_state"]["towers"]
-    # Only main at (2,2) changed: expect one delta with cd>0
-    assert len(towers) == 1
-    t = towers[0]
+    # Round state carries the full tower list; the acted-upon main should
+    # now expose a cooldown while the other main remains unchanged.
+    assert len(towers) == 2
+    t = next(t for t in towers if t["id"] == g0.id)
     assert t == {"cd": 10, "id": g0.id, "player": 0, "pos": {"x": 2, "y": 2}, "type": 0}
 
 
@@ -92,8 +93,7 @@ def test_tech_update_mobility_cost_and_speed_levels(tmp_path):
     rs = last["round_state"]
     assert rs["speedLv"] == [5, 2]
     assert rs["coins"] == [s.coin[0], s.coin[1]]
-    # No towers changed here; delta should be empty
-    assert rs["towers"] == []
+    assert len(rs["towers"]) == 2
 
 
 def test_call_generals_adds_tower_and_deducts_coin(tmp_path):
@@ -121,9 +121,8 @@ def test_call_generals_adds_tower_and_deducts_coin(tmp_path):
 
     last = _read_ant_frames(s.replay_file)[-1]
     towers = last["round_state"]["towers"]
-    # Only the newly added sub general is in delta
-    assert len(towers) == 1
-    t = towers[0]
+    assert len(towers) == 3
+    t = next(t for t in towers if t["type"] == 1 and t["pos"] == {"x": pos[0], "y": pos[1]})
     assert t["player"] == 0 and t["type"] == 1
     assert t["pos"] == {"x": pos[0], "y": pos[1]}
     assert t["cd"] == 0
@@ -176,4 +175,3 @@ def test_tower_downgrade_and_removal_refund(tmp_path):
     assert downgrade_tower(s, 0, tid2) is True
     assert all(g.id != tid2 for g in s.generals)
     assert s.coin[0] == oldc + int(0.8 * 15 * 1)
-

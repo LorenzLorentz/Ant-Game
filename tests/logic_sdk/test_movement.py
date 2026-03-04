@@ -1,6 +1,7 @@
 import math
 import pytest
 
+from logic.gamestate import update_round
 from logic.movement import calculate_new_pos, army_move, check_general_movement, general_move
 from logic.gamedata import Direction, CellType, MainGenerals
 
@@ -179,28 +180,25 @@ def test_ant_kill_count_increment():
 
 def test_ant_generation_and_movement():
     # when update_round is called main generals should spawn ants and the
-    # ants should move toward the opponent base on the subsequent round
+    # ants should move toward the opponent base on the subsequent round.
+    # Level-1 main generals generate ants on rounds divisible by 4.
     from logic.gamestate import GameState
+    from logic.map import PLAYER_0_BASE_CAMP
+    from tests.conftest import place_general
 
     s = GameState()
-    # create two main generals manually
-    s.board[0][0].generals = MainGenerals(player=0, id=0, position=[0, 0])
-    s.board[0][0].player = 0
-    s.board[0][0].army = 10
-    s.board[1][1].generals = MainGenerals(player=1, id=1, position=[1, 1])
-    s.board[1][1].player = 1
-    s.board[1][1].army = 10
+    place_general(s, "main", 0, 0, 0)
+    place_general(s, "main", 1, 1, 1)
+    s.round = 4
 
-    # first round spawns ants at the predefined base camp coords
-    s.update_round(s)
+    # round 4 generates ants at the predefined base camp coords
+    update_round(s)
     assert len(s.ants) >= 1
-    # base camp constant defined in map module
-    from logic.map import PLAYER_0_BASE_CAMP
     pos0 = [ant.pos for ant in s.ants if ant.player == 0][0]
     assert pos0 == PLAYER_0_BASE_CAMP
 
     # second round the ant should move away from the base camp
-    s.update_round(s)
+    update_round(s)
     pos0_new = [ant.pos for ant in s.ants if ant.player == 0][0]
     assert pos0_new != PLAYER_0_BASE_CAMP
 
@@ -211,19 +209,18 @@ def test_ant_no_trail_or_duplicates():
     against backend leaking old positions into the state (which the Unity
     client was exhibiting as the trail-of-ants bug)."""
     from logic.gamestate import GameState
-    from logic.map import PLAYER_0_BASE_CAMP, PLAYER_1_BASE_CAMP
+    from tests.conftest import place_general
 
     s = GameState()
     # give each player a main general so that ants spawn
-    s.board[0][0].generals = MainGenerals(player=0, id=0, position=[0, 0])
-    s.board[0][0].player = 0
-    s.board[1][1].generals = MainGenerals(player=1, id=1, position=[1, 1])
-    s.board[1][1].player = 1
+    place_general(s, "main", 0, 0, 0)
+    place_general(s, "main", 1, 1, 1)
+    s.round = 4
 
     seen_positions = {}
     # simulate 5 rounds and record snapshots
     for _ in range(5):
-        s.update_round(s)
+        update_round(s)
         ants_json = s._build_round_state()["ants"]
         ids = {a["id"] for a in ants_json}
         # every id should be unique per snapshot
@@ -259,4 +256,3 @@ def test_pheromone_seed_and_size(tmp_path):
     # building pheromone returns a padded grid at least 19×19
     ph = s._build_pheromone()
     assert len(ph[0]) >= 19 and len(ph[0][0]) >= 19
-

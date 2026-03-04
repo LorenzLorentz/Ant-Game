@@ -21,6 +21,7 @@ def test_call_generals_respects_map():
     s = GameState()
     # pick an invalid coordinate for tower building
     from logic.call_generals import call_generals
+
     # negative coordinates should be rejected without throwing
     ok = call_generals(s, 0, [-1, -1])
     assert ok is False
@@ -28,17 +29,13 @@ def test_call_generals_respects_map():
     bad = [6, 1]
     ok = call_generals(s, 0, bad)
     assert ok is False
-    # using a valid but unplayable tile (invalid map) should be False
-    bad = [6, 1]
-    ok = s.call_generals(s, 0, bad)
-    assert ok is False
 
 
 def test_ant_path_and_status():
     ant = Ant(player=0, id=0, x=0, y=0, level=0)
     # target farther away, no path yet
-    assert ant.get_status(( (2,2),(5,5) )) == Ant.Status.Alive
+    assert ant.get_status(((2, 2), (5, 5))) == Ant.Status.Alive
     ant.move(0)
-    assert ant.pos != (0,0)
+    assert ant.pos != (0, 0)
     ant.hp = -1
-    assert ant.get_status(( (2,2),(5,5) )) == Ant.Status.Fail
+    assert ant.get_status(((2, 2), (5, 5))) == Ant.Status.Fail

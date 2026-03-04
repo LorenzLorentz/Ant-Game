@@ -3,6 +3,7 @@ import pytest
 from logic.gamestate import GameState
 from logic.call_generals import call_generals, downgrade_tower
 from logic.gamedata import SubGenerals
+from logic.upgrade import production_up
 import logic.constant as constant
 
 
@@ -67,13 +68,11 @@ def test_downgrade_and_refund(tmp_path):
     assert s.coin[0] == oldc + int(0.8 * 15 * 1)
 
 def test_call_generals_fails_without_enough_coin(tmp_path):
-
-
-def test_call_generals_fails_without_enough_coin(tmp_path):
     s = GameState()
     s.replay_file = str(tmp_path / "rep.json")
     _reset_plain(s)
-    s.coin = [49, 100]
+    # First tower costs 15, so 14 should be insufficient.
+    s.coin = [14, 100]
     pos = [1, 1]
     s.board[pos[0]][pos[1]].player = 0
     assert call_generals(s, 0, pos) is False
@@ -99,4 +98,3 @@ def test_call_generals_fails_if_cell_has_general(tmp_path):
     # Pretend a sub general already present
     s.board[pos[0]][pos[1]].generals = SubGenerals(id=0, player=0, position=pos[:])
     assert call_generals(s, 0, pos) is False
-

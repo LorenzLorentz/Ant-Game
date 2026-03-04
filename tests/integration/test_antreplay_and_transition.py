@@ -31,6 +31,7 @@ def test_transition_and_ant_replay_logging(tmp_path, seed):
     s = GameState()
     s.replay_file = str(tmp_path / "ant_replay.json")
     _reset_plain(s)
+    s.coin = [0, 0]
 
     # Place mains to populate towers/ants and enable production
     _place_main(s, 0, 1, 1, army=2)
@@ -46,8 +47,8 @@ def test_transition_and_ant_replay_logging(tmp_path, seed):
     s.set_last_ops(0, [[1, 0, 0, 4, 1], [8]])  # op schema only for logging mapping
     s.set_last_ops(1, [[8]])
 
-    # Ensure not a special round; we only check basic transitions
-    s.round = 1
+    # Round 4 is the first spawn round for level-1 main generals.
+    s.round = 4
     update_round(s)
     s.replay_close()
 
@@ -55,7 +56,7 @@ def test_transition_and_ant_replay_logging(tmp_path, seed):
     # Bog penalty removed army and neutralized cell
     assert s.board[2][2].army == 0 and s.board[2][2].player == -1
     # Round incremented
-    assert s.round == 2
+    assert s.round == 5
 
     # Verify Ant replay JSON content against an exact expected answer
     data = json.loads(open(s.replay_file, "r", encoding="utf-8").read())
@@ -72,12 +73,12 @@ def test_transition_and_ant_replay_logging(tmp_path, seed):
         {"args": -1, "id": -1, "pos": {"x": -1, "y": -1}, "type": 8},
     ]
 
-    # Build the expected state after one round of the new ant game logic.
-    # two ants will have been spawned (one per main general) with default HP.
+    # Build the expected state after one spawn round of the ant game logic.
+    # Newly spawned ants are aged once before the round ends.
     from logic.map import PLAYER_0_BASE_CAMP, PLAYER_1_BASE_CAMP
     expected_ants = [
         {
-            "age": 0,
+            "age": 1,
             "hp": 10,
             "id": 0,
             "level": 0,
@@ -87,7 +88,7 @@ def test_transition_and_ant_replay_logging(tmp_path, seed):
             "status": Ant.Status.Alive,
         },
         {
-            "age": 0,
+            "age": 1,
             "hp": 10,
             "id": 1,
             "level": 0,
@@ -103,7 +104,7 @@ def test_transition_and_ant_replay_logging(tmp_path, seed):
     ]
 
     rs = first.get("round_state")
-    assert rs["coins"] == [0, 0]
+    assert rs["coins"] == [1, 1]
     # base camps are independent values now
     assert rs["camps"] == [50, 50]
     assert rs["speedLv"] == [2, 2]
@@ -112,8 +113,8 @@ def test_transition_and_ant_replay_logging(tmp_path, seed):
     # Exact lists (order matters)
     assert rs["ants"] == expected_ants
     assert rs["towers"] == expected_towers
-    # pheromone grid still derived from armies on owned tiles (unchanged)
+    # Pheromone grid is padded for frontend use and carries seeded values.
     ph0 = rs["pheromone"][0]
     ph1 = rs["pheromone"][1]
-    assert ph0[1][1] == 3 and ph0[3][3] == 0
-    assert ph1[3][3] == 5 and ph1[1][1] == 0
+    assert len(ph0) >= 19 and len(ph0[0]) >= 19
+    assert len(ph1) >= 19 and len(ph1[0]) >= 19

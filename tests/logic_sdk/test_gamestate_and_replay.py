@@ -3,6 +3,7 @@ import pytest
 
 from logic.gamestate import init_generals, update_round
 from logic.gamedata import CellType, SuperWeapon, WeaponType
+from logic.constant import row, col
 
 
 def test_init_generals_counts(plain_state):
@@ -91,6 +92,7 @@ def test_towers_ignore_out_of_bounds_generals(plain_state):
     s = plain_state
     # manually append a general with illegal coordinates
     from logic.gamedata import MainGenerals
+
     bad = MainGenerals(player=0, id=999)
     bad.position = [row + 5, col + 3]  # out of range
     s.generals.append(bad)

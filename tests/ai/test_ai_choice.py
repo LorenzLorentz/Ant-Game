@@ -78,9 +78,9 @@ def test_greedy_intercepts_nearby_ant():
     # when an enemy ant is close to our base camp the policy should send
     # a move from the main general in that direction instead of doing the
     # usual greedy neighbour check.
-    from AI import policy as custom_policy
     from logic.ant import Ant
     from logic.map import PLAYER_0_BASE_CAMP
+
     # prepare state with main general at its base
     s = GameState()
     _reset_plain(s)
@@ -90,10 +90,9 @@ def test_greedy_intercepts_nearby_ant():
     # enemy ant one cell below the base (distance 1 on square grid)
     enemy_ant = Ant(player=1, id=0, x=bx + 1, y=by, level=0)
     s.ants.append(enemy_ant)
-    ops = custom_policy(1, 0, s)
+    ops = greedy_policy(1, 0, s)
     assert ops[0][0] == 1
     # movement should be DOWN towards the ant
     assert ops[0][1] == bx and ops[0][2] == by
     assert ops[0][3] == int(Direction.DOWN) + 1
     assert ops[-1] == [8]
-
