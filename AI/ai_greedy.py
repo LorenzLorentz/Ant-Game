@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -70,4 +70,49 @@ def policy(obs: Dict[str, Any], action_space) -> np.ndarray:
         break
 
     return a
+
+
+def policy_from_site_state(state: Dict[str, Any], my_seat: int) -> List[List[int]]:
+    """
+    针对“网站评测协议”的规则 AI：
+    - 输入为根据规则文档解析出的 Python dict：
+        {
+          "round": R,
+          "towers": [...],
+          "ants": [...],
+          "coins": [G0, G1],
+          "camps_hp": [HP0, HP1],
+        }
+      其中 coins/camps_hp 的含义与文档完全一致。
+    - 输出为 Operation 列表，每条形如 [T, ...]，将由 wrapper 转换成
+      文档中规定的 N + N 行操作文本。
+
+    当前策略（极简、防御向）：
+    - 若金币不足 50，则本轮不执行任何操作（N=0）。
+    - 否则在本方基地周围四个相邻格尝试建一座塔（11 x y），只返回一条操作。
+    """
+    coins = state.get("coins", [0, 0])
+    if not isinstance(coins, (list, tuple)) or len(coins) != 2:
+        return []
+    try:
+        my_coin = int(coins[my_seat])
+    except Exception:
+        return []
+
+    if my_coin < 50:
+        # 金币不足，直接不出手
+        return []
+
+    bx, by = _base_pos(my_seat)
+    ops: List[List[int]] = []
+    candidate_offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    for dx, dy in candidate_offsets:
+        x = bx + dx
+        y = by + dy
+        if 0 <= x < 19 and 0 <= y < 19:
+            # 11 x y：在 (x,y) 建造防御塔（合法性由 C++ 判定）
+            ops.append([TOWER_BUILD, x, y])
+            break
+    return ops
+
 

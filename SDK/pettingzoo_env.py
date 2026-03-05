@@ -1,17 +1,21 @@
 """
-真正通过 `ant_game - deploy` C++ 可执行文件驱动的 PettingZoo AEC 封装。
+通过 `ant_game - deploy` 原版 C++ 可执行程序驱动的 PettingZoo AEC 环境，
+并严格参考官方规则文档与回放 JSON 格式。
 
-约定（与你确认的方案一致）：
+重要约定（与你确认的一致）：
 - 仍然是 AEC：agents = ["player_0", "player_1"]，交替调用 step。
-- 每次 step 只提交“当前玩家的一条 Operation 或结束回合指令”：
-  - type=0: 结束本玩家本回合（不发送任何 Operation 给 C++）
-  - type>0: 解释为一条 Operation，先累积在 Python 端，等两名玩家
-    都结束回合后，一次性把本回合的两个 Operation 列表发给 C++，
-    再从 C++ 读取新一轮的状态 JSON。
+- 每次 step 只提交“当前玩家的一条操作或结束本轮”的动作：
+  - type == 0: 结束本玩家本轮（该玩家本轮不再追加操作）。
+  - type > 0: 解释为一条 Operation（参见 operation.h），累积到当前轮的列表中。
+- 当双方本轮都执行过一次 type==0 后：
+  - 将双方累积的 Operation 列表一起发送给 C++；
+  - 从 C++ 读取一条包含 round_state 的 JSON（结构与官方回放格式一致）；
+  - 更新内部观测与胜负，并开始下一轮。
 
-注意：由于 C++ 输出 JSON 结构在仓库中没有完整文档，这里按惯例做了
-“best-effort” 解析，只依赖非常通用的字段（coins、camps、winner 等），
-若字段缺失则使用缺省值，保证环境逻辑可以正常运行。
+说明：
+- Python 端扮演评测平台/裁判角色，直接通过 comm_judger.h 所定义的
+  JSON+长度前缀 协议与 C++ `Game` 类通信。
+- 这里对 JSON 结构的假设全部来自官方文档中的“回放文件格式说明”。
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ import numpy as np
 try:
     from pettingzoo import AECEnv
     from gymnasium import spaces
-except Exception:  # pragma: no cover - 运行时可能没有安装这两个库
+except Exception:  # pragma: no cover
     AECEnv = object  # type: ignore
     spaces = None  # type: ignore
 
@@ -42,7 +46,9 @@ class EnvConfig:
 
 class CppAntGameProcess:
     """
-    负责和 C++ 可执行程序进行 JSON+长度前缀 的双向通信。
+    封装与 C++ ant_game 可执行文件的 JSON+长度前缀 通信。
+    Python 端作为“judger”，直接给 C++ `Game` 发送 from_judger_init /
+    from_judger_round 对应的 JSON。
     """
 
     def __init__(self, exe_path: str):
@@ -53,7 +59,6 @@ class CppAntGameProcess:
     def _ensure_started(self):
         if self.proc is not None:
             return
-        # 使用仓库根目录作为工作目录
         cwd = str(Path(__file__).resolve().parent.parent)
         self.proc = subprocess.Popen(
             [self.exe_path],
@@ -75,48 +80,57 @@ class CppAntGameProcess:
         assert self.proc is not None and self.proc.stdout is not None
         hdr = self.proc.stdout.read(4)
         if not hdr:
-            raise RuntimeError("C++ antgame process closed stdout unexpectedly.")
+            raise RuntimeError("C++ ant_game process closed stdout.")
         (length,) = struct.unpack(">I", hdr)
         body = self.proc.stdout.read(length)
         if len(body) != length:
-            raise RuntimeError("Failed to read full JSON body from C++ antgame.")
+            raise RuntimeError("Failed to read full JSON body from C++ ant_game.")
         return json.loads(body.decode("utf-8"))
 
-    # ---- 协议封装 ----
+    # ---- 协议：初始化与回合 ----
     def send_init(self, seed: int | None, replay_path: str) -> dict:
         """
         发送 from_judger_init 对应的 JSON，读取 C++ 返回的初始状态 JSON。
+
+        player_list 含义参见 Game::init：
+        - 1: AI 玩家（有运行时/输出限制）
+        - 2: HUMAN_PLAYER（无 AI 相关限制）
+        我们在训练环境中不需要 Saiblo 那些限制，因此统一标为 2。
         """
         self._ensure_started()
         init_msg = {
-            "player_list": [1, 1],  # 1 表示 AI
+            "player_list": [2, 2],  # 视作 human，便于自由发送 Operation JSON
             "player_num": 2,
             "config": {"random_seed": int(seed or 0)},
             "replay": replay_path,
         }
         self._write_json(init_msg)
-        # C++ 会通过 output_info 返回一条包含初始信息的 JSON，这里直接读取
+        # C++ 在 Game::init 中会通过 Output/Output_to_judger 输出首帧信息
         state = self._read_json()
         return state
 
     def send_round(self, p0_ops: List[dict], p1_ops: List[dict]) -> dict:
         """
-        发送一轮中双方的操作列表：
+        发送一轮双方的操作列表：
         - 先发 player=0 的 from_judger_round
         - 再发 player=1 的 from_judger_round
-        然后读取 C++ 该轮结束后 dump_round_state 输出的一条 JSON。
+        操作以 JSON 字符串形式放入 content 字段，C++ 侧以 JSON 模式解析为
+        std::vector<Operation>。
         """
         self._ensure_started()
 
         def _round_msg(player: int, ops: List[dict]) -> dict:
-            # content 按 from_judger_round 的设计是一个字符串，这里约定为
-            # JSON 字符串形式的 Operation 数组，转到 C++ 侧由 comm_judger 中
-            # 的逻辑解析成 std::vector<Operation>。
+            # content 是字符串；内部再是一整个 Operation 数组的 JSON
             ops_str = json.dumps(ops, ensure_ascii=False)
-            return {"player": int(player), "content": ops_str, "time": 0}
+            return {
+                "player": int(player),
+                "content": ops_str,
+                "time": 0,
+            }
 
         self._write_json(_round_msg(0, p0_ops))
         self._write_json(_round_msg(1, p1_ops))
+        # Game::next_round + dump_round_state 之后会输出当前回合的 JSON
         state = self._read_json()
         return state
 
@@ -131,16 +145,17 @@ class CppAntGameProcess:
 
 class AntGameAECEnv(AECEnv):
     """
-    通过 C++ ant_game 可执行文件驱动的 PettingZoo AEC 环境。
+    C++ AntGame 的 PettingZoo AEC 封装。
 
     - agents: ["player_0", "player_1"]
     - action: MultiDiscrete([type, x, y, id, args])
-        * type == 0: 结束本玩家本轮，不发送 Operation（即空操作列表）
-        * type > 0: 解释为一条 Operation，累积在当前轮的 ops 列表中
-    - 每当两名玩家都执行了“结束本轮”（type==0）后：
-        * 将双方累积的 Operation 列表作为一整轮发送给 C++，
-        * 从 C++ 读取该轮结束后的 JSON 状态，
-        * 更新内部观测和奖励，并开始下一轮。
+        * type == 0: 结束本玩家本轮（不发送 Operation）
+        * type > 0: 解释为单条 Operation（type/id/args/pos{x,y}）
+    - 当两名玩家都选择过一次 type==0 后：
+        * 将双方累积的 Operation 列表一并发送给 C++；
+        * 读取一条“回合信息” JSON，结构与官方回放中的元素一致：
+            { seed?, op0, op1, round_state }
+        * 其中 round_state 字段结构参考规则文档。
     """
 
     metadata = {
@@ -152,17 +167,16 @@ class AntGameAECEnv(AECEnv):
         self.render_mode = render_mode
         self.config = config or EnvConfig()
 
-        # agent 列表
         self.possible_agents = ["player_0", "player_1"]
         self.agents = self.possible_agents.copy()
 
-        # 内部轮次与 C++ 通信进程
+        # 进程与内部状态
         root = Path(__file__).resolve().parent.parent
         exe_name = "main.exe" if os.name == "nt" else "main"
         exe_path = root / "ant_game - deploy" / "output" / exe_name
         self._cpp = CppAntGameProcess(str(exe_path))
 
-        self._last_state: Optional[dict] = None
+        self._last_state: Optional[dict] = None  # 最新一轮的完整 JSON（含 round_state）
         self._round_idx: int = 0
         self._pending_ops: Dict[int, List[dict]] = {0: [], 1: []}
         self._ended_this_round: Dict[int, bool] = {0: False, 1: False}
@@ -211,7 +225,6 @@ class AntGameAECEnv(AECEnv):
         if any(self.terminations.values()) or any(self.truncations.values()):
             return
 
-        # 规范化 action
         if isinstance(action, np.ndarray):
             action = action.tolist()
         if not isinstance(action, list) or len(action) < 1:
@@ -220,11 +233,10 @@ class AntGameAECEnv(AECEnv):
         player = self._current
         agent = self.possible_agents[player]
         if agent != self.agent_selection:
-            # 顺序错误的 step 直接忽略
+            # 顺序错误的 step 忽略
             return
 
         atype = int(action[0])
-
         # 清空该 agent 本步 reward
         self.rewards[agent] = 0.0
 
@@ -232,7 +244,6 @@ class AntGameAECEnv(AECEnv):
             # 结束本玩家本轮
             self._ended_this_round[player] = True
         else:
-            # 解码为一条 Operation 并累积
             op = self._decode_to_operation(action)
             self._pending_ops[player].append(op)
 
@@ -243,7 +254,7 @@ class AntGameAECEnv(AECEnv):
             self._pending_ops = {0: [], 1: []}
             self._round_idx += 1
 
-        # 切换当前玩家（AEC 交替）
+        # 交替到另一名玩家
         self._current = 1 - player
         self.agent_selection = self.possible_agents[self._current]
 
@@ -252,38 +263,36 @@ class AntGameAECEnv(AECEnv):
             return None
         if self._last_state is None:
             return "<uninitialized>"
-        try:
-            coins = self._extract_coins(self._last_state)
-            camps_hp = self._extract_camps_hp(self._last_state)
-            return f"Round={self._round_idx} Coins={coins} CampsHP={camps_hp}"
-        except Exception:
-            return f"Round={self._round_idx} raw_state={self._last_state}"
+        coins = self._extract_coins(self._last_state)
+        camps_hp = self._extract_camps_hp(self._last_state)
+        return f"Round={self._round_idx} Coins={coins.tolist()} CampsHP={camps_hp.tolist()}"
 
     # ------------------------------------------------------------------
     # 内部辅助
     # ------------------------------------------------------------------
     def _build_spaces(self):
-        # Action: [type, x, y, id, args]
+        # 动作空间：[type, x, y, id, args]
         self._action_space = spaces.MultiDiscrete(
             np.array(
                 [
-                    40,   # type（0=EndTurn，其它映射到 Operation::Type）
-                    20,   # x（MAP_SIZE=19，给一点冗余）
-                    20,   # y
+                    64,   # type（0=EndTurn，其它映射到 Operation::Type）
+                    19,   # x in [0, MAP_SIZE-1]
+                    19,   # y
                     256,  # id
-                    32,   # args（升级类型/道具类型等）
+                    64,   # args
                 ],
                 dtype=np.int64,
             )
         )
 
+        # 观测空间：对回放 round_state 做一个轻量、通用的投影
         self._observation_space = spaces.Dict(
             {
                 "coins": spaces.Box(low=0, high=10_000, shape=(2,), dtype=np.int32),
                 "camps_hp": spaces.Box(low=0, high=1_000, shape=(2,), dtype=np.int32),
                 "current_player": spaces.Discrete(2),
                 "round": spaces.Discrete(self.config.max_rounds + 1),
-                # 将原始 JSON 字符串压缩成最多 4096 字节的向量，便于需要时做原始特征
+                # 原始 JSON 压缩成字节向量，便于需要时自行解析
                 "raw_state_bytes": spaces.Box(
                     low=0, high=255, shape=(4096,), dtype=np.uint8
                 ),
@@ -300,10 +309,12 @@ class AntGameAECEnv(AECEnv):
         state = self._last_state or {}
         coins = self._extract_coins(state)
         camps_hp = self._extract_camps_hp(state)
+
         raw_bytes = json.dumps(state, ensure_ascii=False).encode("utf-8")
         buf = np.zeros((4096,), dtype=np.uint8)
         n = min(len(raw_bytes), 4096)
         buf[:n] = np.frombuffer(raw_bytes[:n], dtype=np.uint8)
+
         obs = {
             "coins": coins,
             "camps_hp": camps_hp,
@@ -314,7 +325,13 @@ class AntGameAECEnv(AECEnv):
         return obs
 
     def _extract_coins(self, state: dict) -> np.ndarray:
-        coins = state.get("coins")
+        """
+        根据官方回放格式：
+        - 外层为 {seed?, op0, op1, round_state}
+        - coins 位于 round_state["coins"]，为 [c0, c1]
+        """
+        rs = state.get("round_state", state)
+        coins = rs.get("coins")
         if isinstance(coins, list) and len(coins) == 2:
             try:
                 return np.array([int(coins[0]), int(coins[1])], dtype=np.int32)
@@ -324,26 +341,25 @@ class AntGameAECEnv(AECEnv):
 
     def _extract_camps_hp(self, state: dict) -> np.ndarray:
         """
-        C++ 里是通过 Output::add_camps 写入的，常见结构是：
-          "camps": [[hp0, ...], [hp1, ...]]
-        这里只尽量解析第一个元素为血量。
+        根据官方回放格式：
+        - round_state["camps"] 为 [hp0, hp1]
         """
-        camps = state.get("camps")
+        rs = state.get("round_state", state)
+        camps = rs.get("camps")
         if isinstance(camps, list) and len(camps) == 2:
             try:
-                hp0 = int(camps[0][0]) if isinstance(camps[0], list) and camps[0] else 0
-                hp1 = int(camps[1][0]) if isinstance(camps[1], list) and camps[1] else 0
+                hp0 = int(camps[0])
+                hp1 = int(camps[1])
                 return np.array([hp0, hp1], dtype=np.int32)
             except Exception:
                 pass
-        # 兜底：如果没有 camps 字段，则尝试 winner 信息或使用默认 50
         return np.array([50, 50], dtype=np.int32)
 
     def _decode_to_operation(self, action: List[int]) -> dict:
         """
         将 MultiDiscrete 动作解码为单条 Operation：
           { "type": int, "id": int, "args": int, "pos": {"x": int, "y": int} }
-        这与 ant_game - deploy/include/operation.h 中 Operation 定义保持一致。
+        对应 ant_game - deploy/include/operation.h 中 Operation 的 JSON 结构。
         """
         op_type = int(action[0])
         x = int(action[1])
@@ -359,12 +375,12 @@ class AntGameAECEnv(AECEnv):
 
     def _flush_round_and_update_state(self) -> None:
         """
-        将当前轮双方累积的 Operation 列表发送给 C++，并更新内部状态/奖励。
+        将当前轮双方累积的 Operation 列表发送给 C++，并依据 round_state["winner"]
+        更新胜负与奖励。
         """
         try:
             new_state = self._cpp.send_round(self._pending_ops[0], self._pending_ops[1])
         except Exception as exc:
-            # 通信发生错误时，直接截断并给双方 0 奖励
             self._last_state = None
             self.terminations = {a: True for a in self.agents}
             self.rewards = {a: 0.0 for a in self.agents}
@@ -374,8 +390,8 @@ class AntGameAECEnv(AECEnv):
 
         self._last_state = new_state
 
-        # 胜负判定：若 JSON 中有 "winner" 字段（0/1），则结束对局
-        winner = new_state.get("winner", -1)
+        rs = new_state.get("round_state", new_state)
+        winner = rs.get("winner", -1)
         if winner in (0, 1):
             self.terminations = {a: True for a in self.agents}
             self.rewards = {a: 0.0 for a in self.agents}
@@ -395,5 +411,4 @@ def parallel_env(*args, **kwargs):
     except Exception as e:  # pragma: no cover
         raise RuntimeError("pettingzoo not installed for parallel conversion") from e
     return aec_to_parallel(AntGameAECEnv(*args, **kwargs))
-
 
