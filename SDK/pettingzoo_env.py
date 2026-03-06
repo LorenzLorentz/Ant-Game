@@ -1,23 +1,8 @@
 """
-通过 `ant_game - deploy` 原版 C++ 可执行程序驱动的 PettingZoo AEC 环境，
-并严格参考官方规则文档与回放 JSON 格式。
-
-重要约定（与你确认的一致）：
-- 仍然是 AEC：agents = ["player_0", "player_1"]，交替调用 step。
-- 每次 step 只提交“当前玩家的一条操作或结束本轮”的动作：
-  - type == 0: 结束本玩家本轮（该玩家本轮不再追加操作）。
-  - type > 0: 解释为一条 Operation（参见 operation.h），累积到当前轮的列表中。
-- 当双方本轮都执行过一次 type==0 后：
-  - 将双方累积的 Operation 列表一起发送给 C++；
-  - 从 C++ 读取一条包含 round_state 的 JSON（结构与官方回放格式一致）；
-  - 更新内部观测与胜负，并开始下一轮。
-
 说明：
 - Python 端扮演评测平台/裁判角色，直接通过 comm_judger.h 所定义的
   JSON+长度前缀 协议与 C++ `Game` 类通信。
-- 这里对 JSON 结构的假设全部来自官方文档中的“回放文件格式说明”。
 """
-
 from __future__ import annotations
 
 import json
@@ -29,13 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from pettingzoo import AECEnv
+from gymnasium import spaces
 
-try:
-    from pettingzoo import AECEnv
-    from gymnasium import spaces
-except Exception:  # pragma: no cover
-    AECEnv = object  # type: ignore
-    spaces = None  # type: ignore
 
 
 @dataclass
@@ -46,22 +27,25 @@ class EnvConfig:
 
 class CppAntGameProcess:
     """
-    封装与 C++ ant_game 可执行文件的 JSON+长度前缀 通信。
-    Python 端作为“judger”，直接给 C++ `Game` 发送 from_judger_init /
-    from_judger_round 对应的 JSON。
+    封装与 C++ ant_game 可执行文件通信
+    其方式与saiblo上的通信方式类似
     """
 
-    def __init__(self, exe_path: str):
-        self.exe_path = exe_path
+    def __init__(self, path: str):
+        self.path = path
         self.proc: Optional[subprocess.Popen] = None
 
     # ---- 基础 IO ----
     def _ensure_started(self):
+        # restart the subprocess if it has died or hasn't been started yet.
         if self.proc is not None:
-            return
+            if self.proc.poll() is None:
+                return
+            # previous process terminated unexpectedly; clear for restart
+            self.proc = None
         cwd = str(Path(__file__).resolve().parent.parent)
         self.proc = subprocess.Popen(
-            [self.exe_path],
+            [self.path],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -78,35 +62,66 @@ class CppAntGameProcess:
 
     def _read_json(self) -> dict:
         assert self.proc is not None and self.proc.stdout is not None
+        # if the process already died, fail fast
+        if self.proc.poll() is not None:
+            raise RuntimeError(f"C++ ant_game process terminated with code {self.proc.returncode}")
+
         hdr = self.proc.stdout.read(4)
         if not hdr:
+            # the process closed stdout unexpectedly
             raise RuntimeError("C++ ant_game process closed stdout.")
         (length,) = struct.unpack(">I", hdr)
+        # consume the extra object tag (ignored by Python)
+        _ = self.proc.stdout.read(4)
+
+        # read the expected payload; if the process dies mid‑write we'll get a
+        # shorter result and can include diagnostics.
         body = self.proc.stdout.read(length)
         if len(body) != length:
-            raise RuntimeError("Failed to read full JSON body from C++ ant_game.")
+            # gather additional info for debugging
+            remainder = b""
+            try:
+                # attempt to read whatever else might still be available
+                remainder = self.proc.stdout.read()
+            except Exception:
+                pass
+            stderr = b""
+            if self.proc.stderr is not None:
+                stderr = self.proc.stderr.read() or b""
+            raise RuntimeError(
+                f"Failed to read full JSON body from C++ ant_game. "
+                f"expected={length} got={len(body)} leftover={len(remainder)} "
+                f"returncode={self.proc.poll()} stderr={stderr!r}"
+            )
         return json.loads(body.decode("utf-8"))
 
     # ---- 协议：初始化与回合 ----
     def send_init(self, seed: int | None, replay_path: str) -> dict:
         """
         发送 from_judger_init 对应的 JSON，读取 C++ 返回的初始状态 JSON。
-
         player_list 含义参见 Game::init：
         - 1: AI 玩家（有运行时/输出限制）
         - 2: HUMAN_PLAYER（无 AI 相关限制）
-        我们在训练环境中不需要 Saiblo 那些限制，因此统一标为 2。
+        我们在训练环境中不需要 saiblo 那些限制，因此统一标为 2。
         """
+        print(f"Ensuring C++ ant_game process is started...")
         self._ensure_started()
+        print(f"Sending initialization message with seed={seed}...")
         init_msg = {
             "player_list": [2, 2],  # 视作 human，便于自由发送 Operation JSON
             "player_num": 2,
             "config": {"random_seed": int(seed or 0)},
             "replay": replay_path,
         }
+        print(f"Initialization message: {init_msg}")
         self._write_json(init_msg)
-        # C++ 在 Game::init 中会通过 Output/Output_to_judger 输出首帧信息
+        print(f"Waiting for initial state from C++...")
+        # C++ 在 Game::init 中通常会通过 Output/Output_to_judger 输出首帧信息。
+        # 然而在第一回合该消息有时不会包含 round_state 数据；
+        # 因此我们只读取一次并立即返回。后续的 round_state 会在
+        # send_round 中到来，环境无需在 reset 时等待它。
         state = self._read_json()
+        print(f"Received initial state from C++: {state}")
         return state
 
     def send_round(self, p0_ops: List[dict], p1_ops: List[dict]) -> dict:
@@ -114,8 +129,6 @@ class CppAntGameProcess:
         发送一轮双方的操作列表：
         - 先发 player=0 的 from_judger_round
         - 再发 player=1 的 from_judger_round
-        操作以 JSON 字符串形式放入 content 字段，C++ 侧以 JSON 模式解析为
-        std::vector<Operation>。
         """
         self._ensure_started()
 
@@ -146,16 +159,6 @@ class CppAntGameProcess:
 class AntGameAECEnv(AECEnv):
     """
     C++ AntGame 的 PettingZoo AEC 封装。
-
-    - agents: ["player_0", "player_1"]
-    - action: MultiDiscrete([type, x, y, id, args])
-        * type == 0: 结束本玩家本轮（不发送 Operation）
-        * type > 0: 解释为单条 Operation（type/id/args/pos{x,y}）
-    - 当两名玩家都选择过一次 type==0 后：
-        * 将双方累积的 Operation 列表一并发送给 C++；
-        * 读取一条“回合信息” JSON，结构与官方回放中的元素一致：
-            { seed?, op0, op1, round_state }
-        * 其中 round_state 字段结构参考规则文档。
     """
 
     metadata = {
@@ -173,8 +176,16 @@ class AntGameAECEnv(AECEnv):
         # 进程与内部状态
         root = Path(__file__).resolve().parent.parent
         exe_name = "main.exe" if os.name == "nt" else "main"
-        exe_path = root / "ant_game - deploy" / "output" / exe_name
-        self._cpp = CppAntGameProcess(str(exe_path))
+        path = root / "game" / "output" / exe_name
+        # on Windows the binary may be named "main" without extension; try a
+        # fallback if the expected file is missing.
+        if not path.exists():
+            alt = root / "game" / "output" / ("main" if exe_name.endswith(".exe") else "main.exe")
+            if alt.exists():
+                path = alt
+            else:
+                raise FileNotFoundError(f"AntGame executable not found at {path} or {alt}")
+        self._cpp = CppAntGameProcess(str(path))
 
         self._last_state: Optional[dict] = None  # 最新一轮的完整 JSON（含 round_state）
         self._round_idx: int = 0
@@ -210,12 +221,13 @@ class AntGameAECEnv(AECEnv):
         self._pending_ops = {0: [], 1: []}
         self._ended_this_round = {0: False, 1: False}
         self._round_idx = 0
-
+        print(f"Resetting environment with seed={seed}")
         # 发送初始化消息给 C++，读取首帧状态
         replay_dir = Path("replays")
         replay_dir.mkdir(exist_ok=True)
         replay_path = str(replay_dir / "antgame_cpp_pettingzoo.json")
         self._last_state = self._cpp.send_init(seed, replay_path)
+        print("Initial state from C++:", self._last_state)
 
     def observe(self, agent: str):
         player = 0 if agent == "player_0" else 1

@@ -32,123 +32,231 @@ void send_packet(const string &payload) {
     fflush(stdout);
 }
 
+// helpers to read a full state packet
+static bool read_state_lines(vector<string> &out_lines) {
+    string line;
+    // round
+    if (!getline(cin, line))
+        return false;
+    // skip blank
+    while (line.find_first_not_of(" \t\r\n") == string::npos) {
+        if (!getline(cin, line))
+            return false;
+    }
+    out_lines.push_back(line);
+    int R;
+    {
+        stringstream ss(line);
+        if (!(ss >> R))
+            return false; // malformed
+    }
+    // N1 + towers
+    if (!getline(cin, line))
+        return false;
+    out_lines.push_back(line);
+    int N1;
+    {
+        stringstream ss(line);
+        if (!(ss >> N1))
+            return false;
+    }
+    for (int i = 0; i < N1; ++i) {
+        if (!getline(cin, line))
+            return false;
+        out_lines.push_back(line);
+    }
+    // N2 + ants
+    if (!getline(cin, line))
+        return false;
+    out_lines.push_back(line);
+    int N2;
+    {
+        stringstream ss(line);
+        if (!(ss >> N2))
+            return false;
+    }
+    for (int i = 0; i < N2; ++i) {
+        if (!getline(cin, line))
+            return false;
+        out_lines.push_back(line);
+    }
+    // coins
+    if (!getline(cin, line))
+        return false;
+    out_lines.push_back(line);
+    // camps hp
+    if (!getline(cin, line))
+        return false;
+    out_lines.push_back(line);
+    return true;
+}
+
+static void parse_state(const vector<string> &lines,
+                        int &round,
+                        int &G0, int &G1,
+                        int &HP0, int &HP1) {
+    auto it = lines.begin();
+    {
+        stringstream ss(*it);
+        ss >> round;
+    }
+    ++it;
+    int N1;
+    {
+        stringstream ss(*it);
+        ss >> N1;
+    }
+    ++it;
+    for (int i = 0; i < N1; ++i)
+        ++it;
+    int N2;
+    {
+        stringstream ss(*it);
+        ss >> N2;
+    }
+    ++it;
+    for (int i = 0; i < N2; ++i)
+        ++it;
+    {
+        stringstream ss(*it);
+        ss >> G0 >> G1;
+    }
+    ++it;
+    {
+        stringstream ss(*it);
+        ss >> HP0 >> HP1;
+    }
+}
+
+// read opponent ops (no framing)
+static bool recv_ops(vector<array<int,3>> &ops) {
+    string line;
+    if (!getline(cin, line))
+        return false;
+    // skip blanks
+    while (line.find_first_not_of(" \t\r\n") == string::npos) {
+        if (!getline(cin, line))
+            return false;
+    }
+    int N;
+    {
+        stringstream ss(line);
+        if (!(ss >> N))
+            return false;
+    }
+    for (int i = 0; i < N; ++i) {
+        if (!getline(cin, line))
+            return false;
+        stringstream ss(line);
+        array<int,3> op = {0,0,0};
+        ss >> op[0];
+        if (!(op[0] == TOWER_BUILD)) {
+            // other ops have single int
+        } else {
+            ss >> op[1] >> op[2];
+        }
+        ops.push_back(op);
+    }
+    return true;
+}
+
 int main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
 
-    // 1) 初始化：读取 K M
+    // init
     int seat = 0;
     long long seed = 0;
-    if (!(cin >> seat >> seed)) {
+    if (!(cin >> seat >> seed))
         return 0;
-    }
     string dummy;
-    getline(cin, dummy); // 读掉这一行剩余部分
-
-    if (seat != 0 && seat != 1) {
-        // 非法 seat，直接退出
+    getline(cin, dummy);
+    if (seat != 0 && seat != 1)
         return 0;
-    }
+
+    vector<string> state_lines;
+    int round = 0;
+    int G0 = 0, G1 = 0, HP0 = 0, HP1 = 0;
+
+    // we keep last parsed coin counts so policy can use them if needed
+    int my_coin = 0;
 
     while (true) {
-        // 2) 读取一轮局面信息
-        string line;
-        if (!getline(cin, line)) {
-            break; // EOF
-        }
-        // 跳过空行
-        if (line.find_first_not_of(" \t\r\n") == string::npos) {
-            continue;
-        }
-
-        int R = 0;
-        {
-            stringstream ss(line);
-            if (!(ss >> R)) {
-                // 非法 round 行，结束
-                break;
-            }
-        }
-
-        // N1: 防御塔数量
-        if (!getline(cin, line)) break;
-        int N1 = 0;
-        {
-            stringstream ss(line);
-            if (!(ss >> N1)) break;
-        }
-        // 读 N1 行塔信息（本策略暂不使用，但按协议必须读）
-        for (int i = 0; i < N1; ++i) {
-            if (!getline(cin, line)) break;
-            // id player x y type cd
-            // 可以按需解析，这里直接略过
-        }
-
-        // N2: 蚂蚁数量
-        if (!getline(cin, line)) break;
-        int N2 = 0;
-        {
-            stringstream ss(line);
-            if (!(ss >> N2)) break;
-        }
-        // 读 N2 行蚂蚁信息（同样暂不使用）
-        for (int i = 0; i < N2; ++i) {
-            if (!getline(cin, line)) break;
-            // id player x y hp lv age state
-        }
-
-        // 金币行: G0 G1
-        if (!getline(cin, line)) break;
-        int G0 = 0, G1 = 0;
-        {
-            stringstream ss(line);
-            if (!(ss >> G0 >> G1)) break;
-        }
-        int my_coin = (seat == 0 ? G0 : G1);
-
-        // 基地血量行: HP0 HP1
-        if (!getline(cin, line)) break;
-        int HP0 = 0, HP1 = 0;
-        {
-            stringstream ss(line);
-            if (!(ss >> HP0 >> HP1)) break;
-        }
-
-        // 3) 策略决策（等价于 Python 的 policy_from_site_state）
-
-        vector<array<int,3>> ops; // 每条操作最多三个参数 [T x y] / [31] 等
-        if (my_coin >= 50) {
-            auto [bx, by] = base_pos(seat);
-            const int OFF[][2] = {{-1,0},{1,0},{0,-1},{0,1}};
-            for (auto &d : OFF) {
-                int x = bx + d[0];
-                int y = by + d[1];
-                if (0 <= x && x < 19 && 0 <= y && y < 19) {
-                    // 11 x y 在 (x,y) 建塔，具体合法性由 C++ 游戏逻辑判定
-                    ops.push_back({TOWER_BUILD, x, y});
-                    break;
+        if (seat == 0) {
+            // decide using current coin
+            vector<array<int,3>> ops;
+            if (my_coin >= 50) {
+                auto [bx, by] = base_pos(seat);
+                const int OFF[][2] = {{-1,0},{1,0},{0,-1},{0,1}};
+                for (auto &d : OFF) {
+                    int x = bx + d[0];
+                    int y = by + d[1];
+                    if (0 <= x && x < 19 && 0 <= y && y < 19) {
+                        ops.push_back({TOWER_BUILD, x, y});
+                        break;
+                    }
                 }
             }
-        }
-        // 如果金币不足 50 或没找到合适位置，则 ops 为空，对应 N=0
-
-        // 4) 按评测协议构造文本并发送
-        // 文本格式：
-        //   N
-        //   11 x y
-        //   ...
-        ostringstream out;
-        out << ops.size() << "\n";
-        for (auto &op : ops) {
-            if (op[0] == TOWER_BUILD) {
-                out << op[0] << " " << op[1] << " " << op[2] << "\n";
-            } else {
-                // 如果以后扩展其它操作类型，在这里按需输出
-                out << op[0] << "\n";
+            ostringstream out;
+            out << ops.size() << "\n";
+            for (auto &op : ops) {
+                if (op[0] == TOWER_BUILD)
+                    out << op[0] << " " << op[1] << " " << op[2] << "\n";
+                else
+                    out << op[0] << "\n";
             }
+            send_packet(out.str());
+
+            // receive opponent ops (ignored)
+            vector<array<int,3>> dummy_ops;
+            if (!recv_ops(dummy_ops))
+                break;
+
+            // now read the state that follows
+            if (!read_state_lines(state_lines))
+                break;
+            for (auto &l : state_lines) cerr << "[state] " << l << "\n";
+            parse_state(state_lines, round, G0, G1, HP0, HP1);
+            my_coin = (seat == 0 ? G0 : G1);
+            state_lines.clear();
+        } else {
+            // second player: first receive opponent ops
+            vector<array<int,3>> dummy_ops;
+            if (!recv_ops(dummy_ops))
+                break;
+
+            // decide now
+            vector<array<int,3>> ops;
+            if (my_coin >= 50) {
+                auto [bx, by] = base_pos(seat);
+                const int OFF[][2] = {{-1,0},{1,0},{0,-1},{0,1}};
+                for (auto &d : OFF) {
+                    int x = bx + d[0];
+                    int y = by + d[1];
+                    if (0 <= x && x < 19 && 0 <= y && y < 19) {
+                        ops.push_back({TOWER_BUILD, x, y});
+                        break;
+                    }
+                }
+            }
+            ostringstream out;
+            out << ops.size() << "\n";
+            for (auto &op : ops) {
+                if (op[0] == TOWER_BUILD)
+                    out << op[0] << " " << op[1] << " " << op[2] << "\n";
+                else
+                    out << op[0] << "\n";
+            }
+            send_packet(out.str());
+
+            // then read the following state
+            if (!read_state_lines(state_lines))
+                break;
+            for (auto &l : state_lines) cerr << "[state] " << l << "\n";
+            parse_state(state_lines, round, G0, G1, HP0, HP1);
+            my_coin = (seat == 0 ? G0 : G1);
+            state_lines.clear();
         }
-        string payload = out.str();
-        send_packet(payload);
     }
     return 0;
 }
