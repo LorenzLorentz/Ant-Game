@@ -63,10 +63,9 @@ void Map::update_pheromone(Ant *ant) {
         return;
     }
 
-    auto iter = ant->path.end() - 1;
     std::vector<std::pair<int, int>> visited_p = {std::make_pair(x, y)};
     map[x][y].pheromone[player] = std::max(TAU_MIN_INT, map[x][y].pheromone[player] + Q);
-    for (; iter >= ant->path.begin(); iter--) {
+    for (auto iter = ant->path.rbegin(); iter != ant->path.rend(); ++iter) {
         int mov = *iter;
         if (mov == -1)
             continue;
@@ -120,4 +119,3 @@ void Map::next_round() {
                     (LAMBDA_NUM * p + 3000 + 50) / LAMBDA_DENOM);
             }
 }
-

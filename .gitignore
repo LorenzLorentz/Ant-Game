@@ -33,3 +33,9 @@ __main.py
 *.zip
 
 src/*.o
+
+game/output/
+game/*.bin
+game/*.txt
+game/*.json
+game/src/*.o

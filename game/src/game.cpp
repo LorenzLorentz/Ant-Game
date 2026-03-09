@@ -1,7 +1,9 @@
 #include "../include/game.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <tuple>
 using json = nlohmann::json;
 
@@ -29,10 +31,47 @@ constexpr int RANDOM_ANT_DECAY_TURNS = 5;
 constexpr int ANT_TELEPORT_INTERVAL = 10;
 constexpr double ANT_TELEPORT_RATIO = 0.2;
 constexpr double SPAWN_BEHAVIOR_PROBS[4] = {0.5, 0.2, 0.15, 0.15};
+constexpr std::size_t MAX_JUDGER_PACKET_SIZE = 16 * 1024 * 1024;
 const int ant_dx[2][6][2] = {
     {{0, 1}, {-1, 0}, {0, -1}, {1, -1}, {1, 0}, {1, 1}},
     {{-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, 0}, {0, 1}},
 };
+
+std::uint32_t read_be_u32(const std::string &input) {
+    std::uint32_t value = 0;
+    for (int index = 0; index < 4; ++index) {
+        value = (value << 8) + static_cast<unsigned char>(input[index]);
+    }
+    return value;
+}
+
+bool try_parse_json_payload(const std::string &input, json &parsed) {
+    auto try_parse = [&parsed](const std::string &candidate) {
+        try {
+            parsed = json::parse(candidate);
+            return true;
+        } catch (const std::exception &) {
+            return false;
+        }
+    };
+
+    if (try_parse(input)) {
+        return true;
+    }
+    if (input.size() >= 4) {
+        std::uint32_t declared = read_be_u32(input);
+        if (declared == input.size() - 4 && try_parse(input.substr(4))) {
+            return true;
+        }
+    }
+
+    std::size_t start = input.find_first_of("{[");
+    if (start != std::string::npos && start != 0 &&
+        try_parse(input.substr(start))) {
+        return true;
+    }
+    return false;
+}
 } // namespace
 
 unsigned long long Game::next_random() {
@@ -327,9 +366,15 @@ void Game::init()
     record_file = judger_init.get_replay();
 
     json config = judger_init.get_config();
-    if (config.contains("random_seed"))
+    if (config.contains("random_seed") && config["random_seed"].is_number_unsigned())
     {
-        random_seed = config["random_seed"];
+        random_seed = config["random_seed"].get<unsigned long long>();
+    }
+    else if (config.contains("random_seed") &&
+             config["random_seed"].is_number_integer())
+    {
+        long long seed = config["random_seed"].get<long long>();
+        random_seed = seed >= 0 ? static_cast<unsigned long long>(seed) : 0ULL;
     }
     else
     {
@@ -730,7 +775,6 @@ void Game::update_coin()
 // when game ends, return false
 bool Game::next_round()
 {
-
     // std::ofstream fout;
     // out.open("test_2.out");
 
@@ -741,8 +785,13 @@ bool Game::next_round()
     // fout << "mov "<< std::endl;
     update_pheromone();
     // fout << "upp "<< std::endl;
-    manage_ants();
+    bool should_continue = manage_ants();
     // fout << "mng "<< std::endl;
+    if (!should_continue)
+    {
+        round++;
+        return false;
+    }
     generate_ants();
     increase_ant_age();
     // fout << "gen "<< std::endl;
@@ -1449,13 +1498,13 @@ void Game::receive_end_state()
 void Game::send_end_info()
 {
     // scores of players, TO DO
-    int score[2];
+    int score[2] = {0, 0};
     if (winner == 0)
     {
         score[0] = 1;
         score[1] = 0;
     }
-    else
+    else if (winner == 1)
     {
         score[0] = 0;
         score[1] = 1;
@@ -1545,28 +1594,42 @@ void Game::set_AI_state_IO(int player)
 template <typename T>
 void Game::read_from_judger(T &des)
 {
-    int length = 0;
-    for (int i = 1; i <= 4; i++)
-        length = (length << 8) + getchar();
-    std::string in;
-    for (int i = 1; i <= length; i++)
+    std::uint32_t length = 0;
+    for (int i = 0; i < 4; ++i) {
+        int byte = getchar();
+        if (byte == EOF) {
+            std::cerr << "read from judger error\n";
+            std::cerr << "unexpected EOF while reading packet length\n";
+            exit(0);
+        }
+        length = (length << 8) + static_cast<unsigned char>(byte);
+    }
+    if (length > MAX_JUDGER_PACKET_SIZE) {
+        std::cerr << "read from judger error\n";
+        std::cerr << "packet too large: " << length << '\n';
+        exit(0);
+    }
+
+    std::string in(length, '\0');
+    for (std::uint32_t i = 0; i < length; ++i)
     {
-        char c = getchar();
-        in = in + c;
+        int byte = getchar();
+        if (byte == EOF) {
+            std::cerr << "read from judger error\n";
+            std::cerr << "unexpected EOF while reading packet body\n";
+            exit(0);
+        }
+        in[i] = static_cast<char>(byte);
     }
     json judger_json;
 
-    try
-    {
-        judger_json = json::parse(in);
-        des = judger_json;
-    }
-    catch (const std::exception &e)
+    if (!try_parse_json_payload(in, judger_json))
     {
         std::cerr << "read from judger error\n";
         std::cerr << in << '\n';
         exit(0);
     }
+    des = judger_json;
 }
 
 void Game::listen(int player) { output_to_judger.listen_player(player); }

@@ -1,5 +1,55 @@
 #include "../include/comm_judger.h"
+#include <cctype>
+#include <cstdint>
 #include <iomanip>
+
+namespace {
+std::uint32_t read_be_u32(const std::string &input) {
+    std::uint32_t value = 0;
+    for (int index = 0; index < 4; ++index) {
+        value = (value << 8) + static_cast<unsigned char>(input[index]);
+    }
+    return value;
+}
+
+bool strip_length_prefix(const std::string &input, std::string &payload) {
+    if (input.size() < 4) {
+        return false;
+    }
+    std::uint32_t declared = read_be_u32(input);
+    if (declared != input.size() - 4) {
+        return false;
+    }
+    payload = input.substr(4);
+    return true;
+}
+
+std::string normalize_ai_payload(const std::string &input) {
+    std::string payload = input;
+    std::string stripped;
+    if (strip_length_prefix(payload, stripped)) {
+        payload = std::move(stripped);
+    }
+
+    std::size_t start = 0;
+    while (start < payload.size()) {
+        unsigned char ch = static_cast<unsigned char>(payload[start]);
+        if (std::isdigit(ch) || std::isspace(ch)) {
+            break;
+        }
+        ++start;
+    }
+    if (start != 0 && start < payload.size()) {
+        payload = payload.substr(start);
+    }
+
+    while (!payload.empty() &&
+           static_cast<unsigned char>(payload.back()) == '\0') {
+        payload.pop_back();
+    }
+    return payload;
+}
+} // namespace
 
 // convert To_json object to json
 inline void to_json(json &j, const to_judger &to_judger_) {
@@ -52,8 +102,12 @@ void from_judger_round::transfer_op(bool is_ai) {
             exit(0);
         }
     } else {
+        std::string normalized = normalize_ai_payload(content);
+        if (normalized != content) {
+            content = normalized;
+        }
         op_oj_to_json();
-        from_player_oj = content;
+        from_player_oj = normalized;
     }
 }
 

@@ -9,6 +9,7 @@
 #include "operation.h"
 #include "output.h"
 #include "player.h"
+#include <deque>
 #include <random>
 #include <tuple>
 #include <vector>
@@ -48,7 +49,7 @@ class Game {
     Headquarter base_camp0, base_camp1;
     std::vector<Operation> op[2];
     std::vector<Item> item[2];
-    std::vector<DefenseTower> defensive_towers;
+    std::deque<DefenseTower> defensive_towers;
     std::vector<Ant> ants;
 
     Output output;

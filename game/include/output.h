@@ -7,6 +7,7 @@
 #include "map.h"
 #include "operation.h"
 #include <array>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -47,5 +48,5 @@ class Output {
     void dump_all(const std::string &file_name) const;
 
     json get_cur() const;
-    void update_cur(const std::vector<DefenseTower> &defensive_towers);
+    void update_cur(const std::deque<DefenseTower> &defensive_towers);
 };

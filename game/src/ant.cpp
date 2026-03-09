@@ -10,9 +10,23 @@ Ant::Ant(int player, int id, int x, int y, int level)
       id(id),             // Set player and id (may be generated automatically?)
       pos_x(x), pos_y(y), // Set initial position
       level(level),       // Set level
-      hp(hp_list[level]), hp_limit(hp_list[level]), // Set HP and its limit
-      path(),                                        // Init path
-      age(0)
+      hp(hp_list[level]), // Set HP and its limit
+      age(0),
+      hp_limit(hp_list[level]),
+      path(),
+      shield(0),
+      defend(false),
+      is_frozen(false),
+      all_frozen(false),
+      is_chosen(false),
+      invincible(false),
+      evasion(false),
+      behavior(Behavior::Default),
+      behavior_rounds(0),
+      target_x(-1),
+      target_y(-1),
+      has_pending_behavior(false),
+      pending_behavior(Behavior::Default)
 {}
 
 // Get the player to which the ant belong.

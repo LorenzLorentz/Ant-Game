@@ -12,14 +12,11 @@ Game game;
 // save replay when handle signal
 void set_signal() {
     auto signal_handle = [](int sig) {
+        std::cerr << "logic terminated by signal " << sig << '\n';
         game.dump_result(game.get_record_file());
         exit(sig);
     };
-    signal(SIGABRT, signal_handle);
-    signal(SIGFPE, signal_handle);
-    signal(SIGILL, signal_handle);
     signal(SIGINT, signal_handle);
-    signal(SIGSEGV, signal_handle);
     signal(SIGTERM, signal_handle);
 }
 

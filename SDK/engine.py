@@ -848,6 +848,9 @@ class GameState:
         self._move_ants()
         self._update_pheromone()
         self._resolve_ant_lifecycle()
+        if self.terminal:
+            self.round_index += 1
+            return
         self._spawn_ants()
         self._increase_ant_age()
         for player in range(PLAYER_COUNT):

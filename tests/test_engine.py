@@ -163,3 +163,15 @@ def test_too_old_ants_remain_visible_until_next_lifecycle_cleanup() -> None:
     state.advance_round()
     assert all(item.ant_id != 11 for item in state.ants)
     assert state.old_count == [1, 0]
+
+
+def test_terminal_round_stops_before_spawn_and_income() -> None:
+    state = GameState.initial(seed=8)
+    state.bases[1].hp = 1
+    state.ants.append(Ant(12, 0, 16, 9, hp=10, level=0))
+    state.advance_round()
+    assert state.terminal is True
+    assert state.winner == 0
+    assert state.round_index == 1
+    assert state.coins == [55, 50]
+    assert state.ants == []
