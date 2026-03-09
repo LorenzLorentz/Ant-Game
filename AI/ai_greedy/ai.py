@@ -1,48 +1,46 @@
 from __future__ import annotations
 
+import importlib.util
 import itertools
+from pathlib import Path
+import sys
 import time
 from typing import List, Optional, Sequence, Tuple
 
-try:
-    from core import (
-        MAX_ROUND,
-        MAP_PROPERTY,
-        Ant,
-        AntState,
-        BuildingType,
-        GameInfo,
-        Operation,
-        OperationType,
-        Simulator,
-        SuperWeaponType,
-        Tower,
-        TowerType,
-        distance,
-        is_valid_pos,
-    )
-except ModuleNotFoundError as exc:
-    if exc.name != "core":
-        raise
-    from AI.ai_greedy.core import (
-        MAX_ROUND,
-        MAP_PROPERTY,
-        Ant,
-        AntState,
-        BuildingType,
-        GameInfo,
-        Operation,
-        OperationType,
-        Simulator,
-        SuperWeaponType,
-        Tower,
-        TowerType,
-        distance,
-        is_valid_pos,
-    )
+from SDK.forecast_backend import (
+    MAX_ROUND,
+    MAP_PROPERTY,
+    Ant,
+    AntState,
+    BuildingType,
+    ForecastOperation as Operation,
+    ForecastSimulator as Simulator,
+    ForecastState as GameInfo,
+    OperationType,
+    SuperWeaponType,
+    Tower,
+    TowerType,
+    hex_distance as distance,
+    is_valid_pos,
+)
 
 SEARCH_BUDGET = 0.15
 MAX_NODE_COUNT = 20000
+
+
+def _load_runtime_module():
+    module_name = "_agent_tradition_ai_greedy_runtime"
+    cached = sys.modules.get(module_name)
+    if cached is not None:
+        return cached
+    module_path = Path(__file__).with_name("runtime.py")
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError("unable to load greedy runtime module")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 SITE_LAYOUT = (
     (
@@ -433,13 +431,7 @@ class AI:
         self.nodes: List[ForecastNode] = []
 
     def create_session(self):
-        try:
-            from runtime import GreedySession
-        except ModuleNotFoundError as exc:
-            if exc.name != "runtime":
-                raise
-            from AI.ai_greedy.runtime import GreedySession
-        return GreedySession(self)
+        return _load_runtime_module().GreedySession(self)
 
     def _mark_super(self, weapon_type: SuperWeaponType) -> None:
         self.last_superweapon_round = self.current_round

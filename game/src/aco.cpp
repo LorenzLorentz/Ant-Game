@@ -48,8 +48,6 @@ int eta_scaled(int _x, int _y, int x, int y, Pos des) {
 // update pheromone
 void Map::update_pheromone(Ant *ant) {
     int player = ant->get_player();
-    int x = ant->get_x();
-    int y = ant->get_y();
     // 如果到达大本营, 更新全局信息素
     // 如果hp <= 0 或已经走了很长距离, 判定死亡,更新全局信息素并返回
     int Q = 0;
@@ -63,14 +61,18 @@ void Map::update_pheromone(Ant *ant) {
         return;
     }
 
-    std::vector<std::pair<int, int>> visited_p = {std::make_pair(x, y)};
-    map[x][y].pheromone[player] = std::max(TAU_MIN_INT, map[x][y].pheromone[player] + Q);
-    for (auto iter = ant->path.rbegin(); iter != ant->path.rend(); ++iter) {
-        int mov = *iter;
-        if (mov == -1)
+    std::vector<Pos> trail = ant->get_trail_cells();
+    if (trail.empty() ||
+        !(trail.back() == Pos(ant->get_x(), ant->get_y()))) {
+        trail.emplace_back(ant->get_x(), ant->get_y());
+    }
+
+    std::vector<std::pair<int, int>> visited_p;
+    for (auto iter = trail.rbegin(); iter != trail.rend(); ++iter) {
+        int x = iter->x;
+        int y = iter->y;
+        if (!is_valid(x, y))
             continue;
-        x += d[y % 2][(mov + 3) % 6][0];
-        y += d[y % 2][(mov + 3) % 6][1];
         if (std::find(visited_p.begin(), visited_p.end(), std::make_pair(x, y)) != visited_p.end())
             continue;
         map[x][y].pheromone[player] = std::max(TAU_MIN_INT, map[x][y].pheromone[player] + Q);
@@ -88,7 +90,8 @@ int Map::get_move(Ant *ant, Pos des) {
     for (int i = 0; i < 6; i++) {
         int _x = x + d[y % 2][i][0];
         int _y = y + d[y % 2][i][1];
-        if (!ant->path.empty() && ant->path.back() == ((i + 3) % 6)) {
+        if (ant->get_last_move() >= 0 &&
+            ant->get_last_move() == ((i + 3) % 6)) {
             weighted[i] = -1;
         } else if (!is_valid(_x, _y)) {
             weighted[i] = -1;

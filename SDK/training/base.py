@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from SDK.features import FeatureExtractor
-from SDK.pettingzoo_env import AntWarParallelEnv
+from SDK.training.env import AntWarParallelEnv
 
 
 @dataclass(slots=True)

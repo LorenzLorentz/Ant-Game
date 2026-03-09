@@ -147,6 +147,9 @@ class NativeGameStateAdapter:
         self._shadow.apply_operation(player, operation)
         self._refresh_cache()
 
+    def operation_income(self, player: int, operation: Operation, tower_count_hint: int | None = None) -> int:
+        return self._shadow.operation_income(player, operation, tower_count_hint)
+
     def advance_round(self) -> None:
         self.native.advance_round()
         self._shadow.advance_round()

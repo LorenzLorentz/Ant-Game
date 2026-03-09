@@ -13,7 +13,9 @@ Ant::Ant(int player, int id, int x, int y, int level)
       hp(hp_list[level]), // Set HP and its limit
       age(0),
       hp_limit(hp_list[level]),
-      path(),
+      trail_cells({Pos(x, y)}),
+      last_move(NoMove),
+      path_len_total(0),
       shield(0),
       defend(false),
       is_frozen(false),
@@ -52,7 +54,11 @@ int Ant::get_hp_limit() const { return hp_limit; }
 int Ant::get_age() const { return age; }
 
 // Get the length of path
-int Ant::get_path_len() const { return path.size(); }
+int Ant::get_path_len() const { return path_len_total; }
+
+int Ant::get_last_move() const { return last_move; }
+
+const std::vector<Pos> &Ant::get_trail_cells() const { return trail_cells; }
 
 Ant::Behavior Ant::get_behavior() const { return behavior; }
 
@@ -126,16 +132,21 @@ void Ant::move(int direction) {
     const int d[2][6][2] = {
         {{0, 1}, {-1, 0}, {0, -1}, {1, -1}, {1, 0}, {1, 1}},
         {{-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, 0}, {0, 1}}};
-    // path may be used elsewhere
-    //  Change (Unfinished)
-    if (direction == -1)
+    path_len_total++;
+    if (direction == NoMove) {
+        last_move = NoMove;
         return;
+    }
 
     pos_x += d[pos_y % 2][direction][0];
     pos_y += d[pos_y % 2][direction][1];
+    last_move = direction;
+    trail_cells.emplace_back(pos_x, pos_y);
 }
 
 void Ant::teleport_to(int x, int y) {
     pos_x = x;
     pos_y = y;
+    last_move = NoMove;
+    trail_cells.emplace_back(pos_x, pos_y);
 }

@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from AI.ai_greedy.core import Ant as GreedyAnt, AntState as GreedyAntState, GameInfo as GreedyGameInfo
-from AI.ai_greedy.ai import AI as GreedyAI
-from AI.ai_greedy.runtime import _to_greedy_info, _to_sdk_operation
+from AI.ai_greedy import AI as GreedyAI, _to_greedy_info, _to_sdk_operation
 from AI.ai_mcts import MCTSAgent
 from AI.ai_random import RandomAgent
 from SDK.actions import ActionCatalog
 from SDK.backend import load_backend
 from SDK.constants import OperationType
 from SDK.engine import GameState
+from SDK.forecast_backend import Ant as ForecastAnt, AntState as ForecastAntState, ForecastState
 from SDK.model import Ant
 
 
@@ -35,9 +34,22 @@ def test_random_agent_selects_non_empty_legal_bundle() -> None:
     assert bundle in bundles
 
 
-def test_action_catalog_tolerates_stale_ant_paths() -> None:
+def test_action_catalog_tolerates_stale_ant_trails() -> None:
     state = GameState.initial(seed=5)
-    state.ants.append(Ant(99, 1, 17, 9, hp=10, level=0, age=32, path=[4, 4, 4]))
+    state.ants.append(
+        Ant(
+            99,
+            1,
+            17,
+            9,
+            hp=10,
+            level=0,
+            age=32,
+            trail_cells=[(16, 9), (17, 9)],
+            last_move=4,
+            path_len_total=3,
+        )
+    )
     catalog = ActionCatalog(max_actions=16)
     bundles = catalog.build(state, 0)
     assert bundles
@@ -53,7 +65,7 @@ def test_repo_sources_no_longer_reference_legacy_runtime() -> None:
     targets = [
         Path("SDK/native_antwar.cpp"),
         Path("SDK/native_adapter.py"),
-        Path("SDK/backend.py"),
+        Path("SDK/backend/core.py"),
         Path("tools/setup_native.py"),
     ]
     for path in targets:
@@ -106,7 +118,25 @@ def test_greedy_ai_smoke_uses_sdk_runtime_view_without_re() -> None:
         accepted.append(sdk_operation)
 
 
-def test_greedy_rollout_pheromone_update_tolerates_teleported_ant_paths() -> None:
-    info = GreedyGameInfo(19)
-    info.ants.append(GreedyAnt(0, 0, 18, 9, 0, 0, 4, GreedyAntState.FAIL, path=[4, -1, 4]))
+def test_greedy_rollout_pheromone_update_tolerates_teleported_ant_trails() -> None:
+    info = ForecastState(19)
+    info.ants.append(
+        ForecastAnt(
+            0,
+            0,
+            18,
+            9,
+            0,
+            0,
+            4,
+            ForecastAntState.FAIL,
+            trail_cells=[(2, 9), (3, 9), (18, 9)],
+            last_move=-1,
+            path_len_total=2,
+        )
+    )
+    before_origin = info.pheromone[0][3][9]
+    before_target = info.pheromone[0][18][9]
     info.update_pheromone(info.ants[0])
+    assert info.pheromone[0][3][9] < before_origin
+    assert info.pheromone[0][18][9] < before_target

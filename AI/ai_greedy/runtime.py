@@ -12,42 +12,12 @@ try:
 except ModuleNotFoundError as exc:
     if exc.name != "protocol":
         raise
-    from AI.protocol import ProtocolIO
+from AI.protocol import ProtocolIO
 
-from SDK.constants import PHEROMONE_SCALE, OperationType as SDKOperationType
+from SDK.constants import OperationType as SDKOperationType
+from SDK.backend.forecast import ForecastOperation as Operation, ForecastState as GameInfo, build_forecast_state
+from SDK.backend.runtime import MatchRuntime
 from SDK.model import Operation as SDKOperation
-from SDK.runtime import MatchRuntime
-
-try:
-    from core import (
-        MAP_SIZE,
-        Ant,
-        AntState,
-        Base,
-        BuildingType,
-        GameInfo,
-        Operation,
-        SuperWeapon,
-        SuperWeaponType,
-        Tower,
-        TowerType,
-    )
-except ModuleNotFoundError as exc:
-    if exc.name != "core":
-        raise
-    from AI.ai_greedy.core import (
-        MAP_SIZE,
-        Ant,
-        AntState,
-        Base,
-        BuildingType,
-        GameInfo,
-        Operation,
-        SuperWeapon,
-        SuperWeaponType,
-        Tower,
-        TowerType,
-    )
 
 
 def _to_sdk_operation(operation: Operation) -> SDKOperation:
@@ -55,81 +25,7 @@ def _to_sdk_operation(operation: Operation) -> SDKOperation:
 
 
 def _to_greedy_info(state) -> GameInfo:
-    info = GameInfo(state.seed)
-    info.round = state.round_index
-    info.coins = list(state.coins)
-    info.old_count = list(state.old_count)
-    info.die_count = list(state.die_count)
-    info.next_ant_id = state.next_ant_id
-    info.next_tower_id = state.next_tower_id
-    info.super_weapon_cd = state.weapon_cooldowns.astype(int).tolist()
-
-    info.bases = [
-        Base(
-            player=base.player,
-            x=base.x,
-            y=base.y,
-            hp=base.hp,
-            gen_speed_level=base.generation_level,
-            ant_level=base.ant_level,
-        )
-        for base in state.bases
-    ]
-
-    info.building_tag = [[BuildingType.EMPTY for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
-    for base in info.bases:
-        info.building_tag[base.x][base.y] = BuildingType.BASE
-
-    info.towers = []
-    for tower in state.towers:
-        info.towers.append(
-            Tower(
-                id=tower.tower_id,
-                player=tower.player,
-                x=tower.x,
-                y=tower.y,
-                type=TowerType(int(tower.tower_type)),
-                cd=tower.display_cooldown(),
-            )
-        )
-        info.building_tag[tower.x][tower.y] = BuildingType.TOWER
-
-    info.ants = [
-        Ant(
-            id=ant.ant_id,
-            player=ant.player,
-            x=ant.x,
-            y=ant.y,
-            hp=ant.hp,
-            level=ant.level,
-            age=ant.age,
-            state=AntState(int(ant.status)),
-            evasion=2 if ant.evasion else 0,
-            deflector=bool(ant.deflector),
-            path=list(ant.path),
-        )
-        for ant in state.ants
-    ]
-
-    info.pheromone = [
-        [
-            [state.pheromone[player, x, y] / float(PHEROMONE_SCALE) for y in range(MAP_SIZE)]
-            for x in range(MAP_SIZE)
-        ]
-        for player in range(2)
-    ]
-
-    info.super_weapons = []
-    for effect in state.active_effects:
-        weapon = SuperWeapon(
-            type=SuperWeaponType(int(effect.weapon_type)),
-            player=effect.player,
-            x=effect.x,
-            y=effect.y,
-        )
-        weapon.left_time = effect.remaining_turns
-        info.super_weapons.append(weapon)
-    return info
+    return build_forecast_state(state)
 
 
 class GreedySession(MatchSession):

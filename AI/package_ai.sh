@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "usage: $0 <random|mcts|greedy> [output_path_or_dir]" >&2
+  echo "usage: $0 <random|mcts|greedy|example> [output_path_or_dir]" >&2
   exit 1
 fi
 
@@ -89,11 +89,12 @@ case "$TARGET" in
     ;;
   greedy)
     ARCHIVE_NAME="ai_greedy.zip"
-    FILE_MAPPINGS=(
-      "${REPO_ROOT}/AI/ai_greedy/ai.py:ai.py"
-      "${REPO_ROOT}/AI/ai_greedy/core.py:core.py"
-      "${REPO_ROOT}/AI/ai_greedy/runtime.py:runtime.py"
-    )
+    FILE_MAPPINGS=("${REPO_ROOT}/AI/ai_greedy.py:ai.py")
+    TREE_MAPPINGS=("${REPO_ROOT}/AI/ai_greedy:ai_greedy")
+    ;;
+  example)
+    ARCHIVE_NAME="ai_example.zip"
+    FILE_MAPPINGS=("${REPO_ROOT}/AI/ai_example.py:ai.py")
     ;;
   *)
     echo "unknown target: ${TARGET}" >&2

@@ -366,7 +366,9 @@ struct NativeState {
             auto &ant = game.ants.back();
             auto it = previous_ants.find(ant_id);
             if (it != previous_ants.end()) {
-                ant.path = it->second.path;
+                ant.trail_cells = it->second.trail_cells;
+                ant.last_move = it->second.last_move;
+                ant.path_len_total = it->second.path_len_total;
                 ant.age = public_age;
                 ant.shield = it->second.shield;
                 ant.defend = it->second.defend;
@@ -389,6 +391,17 @@ struct NativeState {
                 ant.target_y = it->second.target_y;
                 ant.has_pending_behavior = it->second.has_pending_behavior;
                 ant.pending_behavior = it->second.pending_behavior;
+            }
+            if (row.size() >= 9) {
+                const Ant::Behavior public_behavior =
+                    static_cast<Ant::Behavior>(row[8]);
+                if (ant.behavior != public_behavior)
+                    ant.behavior_rounds = 0;
+                ant.behavior = public_behavior;
+                if (ant.behavior != Ant::Behavior::Bewitched) {
+                    ant.target_x = -1;
+                    ant.target_y = -1;
+                }
             }
             max_ant_id = std::max(max_ant_id, ant_id + 1);
         }

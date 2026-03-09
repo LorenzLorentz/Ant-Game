@@ -261,7 +261,8 @@ void to_judger::cur_json_to_oj(const json &src, const int &state) {
                        std::to_string(ant_info["hp"].get<int>()) + " " +
                        std::to_string(ant_info["level"].get<int>()) + " " +
                        std::to_string(ant_info["age"].get<int>()) + " " +
-                       std::to_string(ant_info["status"].get<int>()) + "\n";
+                       std::to_string(ant_info["status"].get<int>()) + " " +
+                       std::to_string(ant_info.value("behavior", 0)) + "\n";
     }
     std::vector<int> coin = src["coins"].get<std::vector<int>>();
     oj_to_judger = oj_to_judger + std::to_string(coin[0]) + " " +

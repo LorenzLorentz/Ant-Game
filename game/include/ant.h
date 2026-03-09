@@ -1,6 +1,7 @@
 #ifndef __ANT_H__
 #define __ANT_H__
 
+#include "pos.h"
 #include <vector>
 class Ant {
   private:
@@ -13,6 +14,8 @@ class Ant {
     int hp_limit;
 
   public:
+    static constexpr int NoMove = -1;
+
     enum Behavior {
         Default,
         Conservative,
@@ -21,8 +24,9 @@ class Ant {
         ControlFree,
     };
 
-    // 暂时...?
-    std::vector<int> path;
+    std::vector<Pos> trail_cells;
+    int last_move = NoMove;
+    int path_len_total = 0;
     static const int age_limit = 32;
     int shield=0;
     bool defend=false;
@@ -56,6 +60,8 @@ class Ant {
     int get_level() const;
     int get_age() const;
     int get_path_len() const;
+    int get_last_move() const;
+    const std::vector<Pos> &get_trail_cells() const;
     Behavior get_behavior() const;
     bool is_control_immune() const;
 

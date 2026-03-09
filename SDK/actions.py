@@ -14,9 +14,9 @@ from SDK.constants import (
     TOWER_UPGRADE_TREE,
     TowerType,
 )
-from SDK.engine import GameState
 from SDK.features import FeatureExtractor
 from SDK.geometry import hex_distance
+from SDK.backend.state import BackendState
 from SDK.model import Operation, Tower
 
 
@@ -36,7 +36,7 @@ class ActionCatalog:
         self.max_actions = max_actions
         self.feature_extractor = feature_extractor or FeatureExtractor(max_actions=max_actions)
 
-    def build(self, state: GameState, player: int) -> list[ActionBundle]:
+    def build(self, state: BackendState, player: int) -> list[ActionBundle]:
         bundles: list[ActionBundle] = [ActionBundle(name="hold", score=0.0, tags=("noop",))]
         bundles.extend(self._build_candidates(state, player))
         bundles.extend(self._upgrade_candidates(state, player))
@@ -63,7 +63,7 @@ class ActionCatalog:
             return bundles[action_index]
         return bundles[0]
 
-    def _build_candidates(self, state: GameState, player: int) -> list[ActionBundle]:
+    def _build_candidates(self, state: BackendState, player: int) -> list[ActionBundle]:
         results: list[ActionBundle] = []
         tower_count = state.tower_count(player)
         build_cost = state.build_tower_cost(tower_count)
@@ -79,7 +79,7 @@ class ActionCatalog:
             results.append(ActionBundle(name=f"build@{x},{y}", operations=(op,), score=score, tags=("build",)))
         return results
 
-    def _upgrade_candidates(self, state: GameState, player: int) -> list[ActionBundle]:
+    def _upgrade_candidates(self, state: BackendState, player: int) -> list[ActionBundle]:
         results: list[ActionBundle] = []
         enemy_base = PLAYER_BASES[1 - player]
         for tower in state.towers_of(player):
@@ -100,7 +100,7 @@ class ActionCatalog:
                 )
         return results
 
-    def _downgrade_candidates(self, state: GameState, player: int) -> list[ActionBundle]:
+    def _downgrade_candidates(self, state: BackendState, player: int) -> list[ActionBundle]:
         results: list[ActionBundle] = []
         for tower in state.towers_of(player):
             pressure = self._local_enemy_pressure(state, player, tower.x, tower.y)
@@ -109,12 +109,12 @@ class ActionCatalog:
             op = Operation(OperationType.DOWNGRADE_TOWER, tower.tower_id)
             if not state.can_apply_operation(player, op):
                 continue
-            refund = state._operation_income(player, op)
+            refund = state.operation_income(player, op)
             score = refund * 0.04 - state.slot_priority(player, tower.x, tower.y) * 0.3 - tower.level * 3.0
             results.append(ActionBundle(name=f"downgrade#{tower.tower_id}", operations=(op,), score=score, tags=("sell",)))
         return results
 
-    def _base_upgrade_candidates(self, state: GameState, player: int) -> list[ActionBundle]:
+    def _base_upgrade_candidates(self, state: BackendState, player: int) -> list[ActionBundle]:
         results: list[ActionBundle] = []
         if state.bases[player].ant_level < 2:
             op = Operation(OperationType.UPGRADE_GENERATED_ANT)
@@ -128,7 +128,7 @@ class ActionCatalog:
                 results.append(ActionBundle("upgrade-gen", (op,), score, ("base", "tempo")))
         return results
 
-    def _superweapon_candidates(self, state: GameState, player: int) -> list[ActionBundle]:
+    def _superweapon_candidates(self, state: BackendState, player: int) -> list[ActionBundle]:
         results: list[ActionBundle] = []
         enemy = 1 - player
         enemy_ants = state.ants_of(enemy)
@@ -182,7 +182,7 @@ class ActionCatalog:
 
         return results
 
-    def _paired_candidates(self, state: GameState, player: int, singles: list[ActionBundle]) -> list[ActionBundle]:
+    def _paired_candidates(self, state: BackendState, player: int, singles: list[ActionBundle]) -> list[ActionBundle]:
         results: list[ActionBundle] = []
         left = [bundle for bundle in singles if bundle.tags and bundle.tags[0] in {"sell", "build", "upgrade", "base"}]
         left = sorted(left, key=lambda item: item.score, reverse=True)[:8]
@@ -209,7 +209,7 @@ class ActionCatalog:
                 results.append(ActionBundle(name=name, operations=tuple(operations), score=score, tags=("combo",)))
         return results
 
-    def _rerank_with_one_step_rollout(self, state: GameState, player: int, bundles: list[ActionBundle]) -> list[ActionBundle]:
+    def _rerank_with_one_step_rollout(self, state: BackendState, player: int, bundles: list[ActionBundle]) -> list[ActionBundle]:
         baseline = self.feature_extractor.evaluate(state, player)
         reranked: list[ActionBundle] = []
         for bundle in bundles:
@@ -223,7 +223,7 @@ class ActionCatalog:
             return [ActionBundle(name="hold")]
         return reranked
 
-    def _local_enemy_pressure(self, state: GameState, player: int, x: int, y: int) -> float:
+    def _local_enemy_pressure(self, state: BackendState, player: int, x: int, y: int) -> float:
         pressure = 0.0
         for ant in state.ants_of(1 - player):
             distance = hex_distance(x, y, ant.x, ant.y)
@@ -244,7 +244,7 @@ class ActionCatalog:
             return max(0.0, 18 - forward_distance) + local_density * 0.4
         return 0.0
 
-    def _storm_value(self, state: GameState, player: int, x: int, y: int) -> float:
+    def _storm_value(self, state: BackendState, player: int, x: int, y: int) -> float:
         enemy = 1 - player
         total = 0.0
         for ant in state.ants_of(enemy):
@@ -253,7 +253,7 @@ class ActionCatalog:
                 total += ant.kill_reward + (4 - distance) * 0.5
         return total - SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].cost * 0.03
 
-    def _emp_value(self, state: GameState, player: int, x: int, y: int) -> float:
+    def _emp_value(self, state: BackendState, player: int, x: int, y: int) -> float:
         total = 0.0
         for tower in state.towers_of(1 - player):
             distance = hex_distance(x, y, tower.x, tower.y)
@@ -261,7 +261,7 @@ class ActionCatalog:
                 total += 3.0 + tower.level * 2.5
         return total - SUPER_WEAPON_STATS[SuperWeaponType.EMP_BLASTER].cost * 0.025
 
-    def _deflector_value(self, state: GameState, player: int, x: int, y: int) -> float:
+    def _deflector_value(self, state: BackendState, player: int, x: int, y: int) -> float:
         total = 0.0
         for ant in state.ants_of(player):
             if hex_distance(x, y, ant.x, ant.y) <= SUPER_WEAPON_STATS[SuperWeaponType.DEFLECTOR].attack_range:
@@ -269,7 +269,7 @@ class ActionCatalog:
         total += max(0.0, 7 - state.nearest_ant_distance(player)) * 0.5
         return total - SUPER_WEAPON_STATS[SuperWeaponType.DEFLECTOR].cost * 0.02
 
-    def _evasion_value(self, state: GameState, player: int, x: int, y: int) -> float:
+    def _evasion_value(self, state: BackendState, player: int, x: int, y: int) -> float:
         total = 0.0
         for ant in state.ants_of(player):
             if hex_distance(x, y, ant.x, ant.y) <= SUPER_WEAPON_STATS[SuperWeaponType.EMERGENCY_EVASION].attack_range:

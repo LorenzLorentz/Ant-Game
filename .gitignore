@@ -39,3 +39,8 @@ game/*.bin
 game/*.txt
 game/*.json
 game/src/*.o
+game/src/*.d
+game_debugged
+game_repro_replay.json
+mini_replay.txt
+update.md

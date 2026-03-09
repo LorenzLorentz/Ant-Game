@@ -87,14 +87,18 @@ def test_zip_rand_creates_runnable_layout(tmp_path: Path) -> None:
 def test_zip_mcts_and_zip_greedy_include_expected_support_files(tmp_path: Path) -> None:
     mcts_root = tmp_path / "mcts-package"
     greedy_root = tmp_path / "greedy-package"
+    example_root = tmp_path / "example-package"
     assert _run_packaging_script("zip_mcts.sh", mcts_root) == mcts_root
     assert _run_packaging_script("zip_greedy.sh", greedy_root) == greedy_root
+    assert _run_packaging_script("zip_example.sh", example_root) == example_root
     _assert_packaged_layout(mcts_root)
     _assert_packaged_layout(greedy_root)
+    _assert_packaged_layout(example_root)
     assert not (mcts_root / "ai_greedy.py").exists()
     assert not (mcts_root / "AI" / "ai_greedy").exists()
-    assert (greedy_root / "runtime.py").exists()
-    assert (greedy_root / "core.py").exists()
+    assert (greedy_root / "ai_greedy" / "ai.py").exists()
+    assert (greedy_root / "ai_greedy" / "runtime.py").exists()
+    assert not (example_root / "ai_greedy").exists()
     assert not (greedy_root / "antwar").exists()
     assert not (greedy_root / "AI" / "ai_greedy").exists()
 
@@ -103,6 +107,11 @@ def test_gitignore_covers_transient_directories() -> None:
     content = Path(".gitignore").read_text()
     for pattern in ("build/", "__pycache__/", ".pytest_cache/"):
         assert pattern in content
+
+
+def test_ai_tree_has_single_main_entrypoint() -> None:
+    main_files = sorted(path.as_posix() for path in Path("AI").rglob("main.py"))
+    assert main_files == ["AI/main.py"]
 
 
 def test_main_entrypoint_uses_supplied_ai_class(monkeypatch) -> None:
@@ -158,8 +167,18 @@ def test_zip_script_accepts_explicit_zip_output_path(tmp_path: Path) -> None:
 
 
 def test_packaged_ais_do_not_require_gymnasium_for_main_import(tmp_path: Path) -> None:
-    for script_name in ("zip_rand.sh", "zip_mcts.sh", "zip_greedy.sh"):
+    for script_name in ("zip_rand.sh", "zip_mcts.sh", "zip_greedy.sh", "zip_example.sh"):
         package_root = tmp_path / script_name.replace(".sh", "")
         returned_path = _run_packaging_script(script_name, package_root)
         assert returned_path == package_root
         _assert_packaged_main_imports_without_optional_env_dependency(package_root)
+
+
+def test_checked_in_ai_archives_bundle_current_sdk_engine() -> None:
+    archives = [path for path in (Path("AI/ai_rand.zip"), Path("AI/ai_mcts.zip"), Path("AI/ai_greedy.zip")) if path.exists()]
+    assert archives
+    for archive_path in archives:
+        with zipfile.ZipFile(archive_path) as archive:
+            engine_source = archive.read("SDK/engine.py").decode("utf-8", errors="replace")
+        assert "ant.record_move(direction)" in engine_source
+        assert "ant.path.append(direction)" not in engine_source

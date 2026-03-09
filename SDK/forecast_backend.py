@@ -1,155 +1,52 @@
 from __future__ import annotations
 
-import struct
-import sys
-from collections import deque
 from dataclasses import dataclass, field
 from enum import IntEnum
-from math import pow
-from typing import Deque, Iterable, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence
 
+from SDK.constants import (
+    ANT_AGE_LIMIT,
+    ANT_GENERATION_CYCLE,
+    ANT_KILL_REWARD,
+    ANT_MAX_HP,
+    BASIC_INCOME,
+    BASE_UPGRADE_COST,
+    INITIAL_COINS,
+    MAP_PROPERTY,
+    MAP_SIZE,
+    MAX_ROUND,
+    OFFSET,
+    OperationType,
+    PHEROMONE_ATTENUATION,
+    PHEROMONE_FLOOR,
+    PHEROMONE_INIT,
+    PHEROMONE_SCALE,
+    PLAYER_BASES,
+    SUPER_WEAPON_STATS,
+    SuperWeaponType,
+    TOWER_BUILD_BASE_COST,
+    TOWER_BUILD_RATIO,
+    TOWER_DOWNGRADE_REFUND_RATIO,
+    TOWER_STATS,
+    TOWER_UPGRADE_TREE,
+    TowerType,
+    AntStatus,
+)
+from SDK.geometry import hex_distance, is_highland, is_path, is_valid_pos
 
-EDGE = 10
-MAP_SIZE = 2 * EDGE - 1
+AntState = AntStatus
+BASE_POS = PLAYER_BASES
+COIN_INIT = INITIAL_COINS
+PHEROMONE_MIN = PHEROMONE_FLOOR
+PHEROMONE_ATTENUATING_RATIO = PHEROMONE_ATTENUATION
+LEVEL2_BASE_UPGRADE_PRICE, LEVEL3_BASE_UPGRADE_PRICE = BASE_UPGRADE_COST
+NO_MOVE = -1
 
 
 class BuildingType(IntEnum):
     EMPTY = 0
     TOWER = 1
     BASE = 2
-
-
-class PointType(IntEnum):
-    VOID = -1
-    PATH = 0
-    BARRIER = 1
-    PLAYER0_HIGHLAND = 2
-    PLAYER1_HIGHLAND = 3
-
-
-class AntState(IntEnum):
-    ALIVE = 0
-    SUCCESS = 1
-    FAIL = 2
-    TOO_OLD = 3
-    FROZEN = 4
-
-
-class TowerType(IntEnum):
-    BASIC = 0
-    HEAVY = 1
-    HEAVY_PLUS = 11
-    ICE = 12
-    CANNON = 13
-    QUICK = 2
-    QUICK_PLUS = 21
-    DOUBLE = 22
-    SNIPER = 23
-    MORTAR = 3
-    MORTAR_PLUS = 31
-    PULSE = 32
-    MISSILE = 33
-
-
-class SuperWeaponType(IntEnum):
-    LIGHTNING_STORM = 1
-    EMP_BLASTER = 2
-    DEFLECTOR = 3
-    EMERGENCY_EVASION = 4
-    COUNT = 5
-
-
-class OperationType(IntEnum):
-    BUILD_TOWER = 11
-    UPGRADE_TOWER = 12
-    DOWNGRADE_TOWER = 13
-    USE_LIGHTNING_STORM = 21
-    USE_EMP_BLASTER = 22
-    USE_DEFLECTOR = 23
-    USE_EMERGENCY_EVASION = 24
-    UPGRADE_GENERATION_SPEED = 31
-    UPGRADE_GENERATED_ANT = 32
-
-
-MAP_PROPERTY = ((-1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 0, -1, -1, -1, -1, -1, -1, -1, -1), (-1, -1, -1, -1, -1, -1, 0, 0, 1, 0, 1, 0, 0, -1, -1, -1, -1, -1, -1), (-1, -1, -1, -1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 0, 0, -1, -1, -1, -1), (-1, -1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, -1, -1), (0, 0, 2, 2, 0, 1, 0, 0, 0, 2, 0, 0, 0, 1, 0, 2, 2, 0, 0), (0, 0, 0, 2, 0, 0, 2, 2, 0, 2, 0, 2, 2, 0, 0, 2, 0, 0, 0), (0, 2, 2, 0, 2, 0, 0, 2, 0, 2, 0, 2, 0, 0, 2, 0, 2, 2, 0), (0, 2, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0, 2, 0, 0, 0, 2, 0), (0, 0, 2, 0, 2, 0, 0, 2, 0, 0, 0, 2, 0, 0, 2, 0, 2, 0, 0), (0, 1, 3, 0, 3, 1, 0, 1, 0, 1, 0, 1, 0, 1, 3, 0, 3, 1, 0), (0, 0, 0, 0, 0, 0, 0, 3, 3, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0), (0, 3, 3, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 3, 3, 0, 3, 3, 0), (0, 3, 0, 0, 0, 0, 3, 3, 0, 3, 0, 3, 3, 0, 0, 0, 0, 3, 0), (0, 0, 3, 3, 0, 0, 0, 3, 0, 3, 0, 3, 0, 0, 0, 3, 3, 0, 0), (-1, 0, 0, 3, 0, 1, 1, 0, 0, 3, 0, 0, 1, 1, 0, 3, 0, 0, -1), (-1, -1, -1, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, -1, -1, -1), (-1, -1, -1, -1, -1, 0, 0, 1, 1, 0, 1, 1, 0, 0, -1, -1, -1, -1, -1), (-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, -1, -1, -1, -1, -1, -1, -1), (-1, -1, -1, -1, -1, -1, -1, -1, -1, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1))
-OFFSET = (((0, 1), (-1, 0), (0, -1), (1, -1), (1, 0), (1, 1)), ((-1, 1), (-1, 0), (-1, -1), (0, -1), (1, 0), (0, 1)))
-
-MAX_ROUND = 512
-BASE_POS = ((2, EDGE - 1), (MAP_SIZE - 3, EDGE - 1))
-GENERATION_CYCLE = (4, 2, 1)
-ANT_MAX_HP = (10, 25, 50)
-ANT_REWARD = (3, 5, 7)
-COIN_INIT = 50
-BASIC_INCOME = 1
-LEVEL2_BASE_UPGRADE_PRICE = 200
-LEVEL3_BASE_UPGRADE_PRICE = 250
-TOWER_BUILD_PRICE_BASE = 15
-TOWER_BUILD_PRICE_RATIO = 2
-LEVEL2_TOWER_UPGRADE_PRICE = 60
-LEVEL3_TOWER_UPGRADE_PRICE = 200
-TOWER_DOWNGRADE_REFUND_RATIO = 0.8
-PHEROMONE_MIN = 0.0
-PHEROMONE_INIT = 10.0
-PHEROMONE_ATTENUATING_RATIO = 0.97
-
-TOWER_INFO = {
-    TowerType.BASIC: (5, 2.0, 2),
-    TowerType.HEAVY: (20, 2.0, 2),
-    TowerType.QUICK: (6, 1.0, 3),
-    TowerType.MORTAR: (16, 4.0, 3),
-    TowerType.HEAVY_PLUS: (35, 2.0, 3),
-    TowerType.ICE: (15, 2.0, 2),
-    TowerType.CANNON: (50, 3.0, 3),
-    TowerType.QUICK_PLUS: (8, 0.5, 3),
-    TowerType.DOUBLE: (7, 1.0, 4),
-    TowerType.SNIPER: (15, 2.0, 6),
-    TowerType.MORTAR_PLUS: (35, 4.0, 4),
-    TowerType.PULSE: (30, 3.0, 2),
-    TowerType.MISSILE: (45, 6.0, 5),
-}
-
-SUPER_WEAPON_INFO = {
-    SuperWeaponType.LIGHTNING_STORM: (20, 3, 100, 150),
-    SuperWeaponType.EMP_BLASTER: (20, 3, 100, 150),
-    SuperWeaponType.DEFLECTOR: (10, 3, 50, 100),
-    SuperWeaponType.EMERGENCY_EVASION: (1, 3, 50, 100),
-}
-
-
-def distance(x0: int, y0: int, x1: int, y1: int) -> int:
-    dy = abs(y0 - y1)
-    if dy % 2:
-        if x0 > x1:
-            dx = max(0, abs(x0 - x1) - dy // 2 - (y0 % 2))
-        else:
-            dx = max(0, abs(x0 - x1) - dy // 2 - (1 - (y0 % 2)))
-    else:
-        dx = max(0, abs(x0 - x1) - dy // 2)
-    return dx + dy
-
-
-def is_valid_pos(x: int, y: int) -> bool:
-    return 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE and MAP_PROPERTY[x][y] != PointType.VOID
-
-
-def is_path(x: int, y: int) -> bool:
-    return 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE and MAP_PROPERTY[x][y] == PointType.PATH
-
-
-def is_highland(player: int, x: int, y: int) -> bool:
-    if not (0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE):
-        return False
-    target = PointType.PLAYER0_HIGHLAND if player == 0 else PointType.PLAYER1_HIGHLAND
-    return MAP_PROPERTY[x][y] == target
-
-
-def get_direction(x0: int, y0: int, x1: int, y1: int) -> int:
-    dx = x1 - x0
-    dy = y1 - y0
-    for idx, (off_x, off_y) in enumerate(OFFSET[y0 % 2]):
-        if off_x == dx and off_y == dy:
-            return idx
-    return -1
 
 
 class LcgRandom:
@@ -159,6 +56,13 @@ class LcgRandom:
     def get(self) -> int:
         self.seed = (25214903917 * self.seed) & ((1 << 48) - 1)
         return self.seed
+
+
+def _trail_for_pheromone(ant: Ant) -> List[tuple[int, int]]:
+    trail = list(ant.trail_cells)
+    if not trail or trail[-1] != (ant.x, ant.y):
+        trail.append((ant.x, ant.y))
+    return trail
 
 
 @dataclass(slots=True)
@@ -173,27 +77,44 @@ class Ant:
     state: AntState
     evasion: int = 0
     deflector: bool = False
-    path: List[int] = field(default_factory=list)
+    trail_cells: List[tuple[int, int]] = field(default_factory=list)
+    last_move: int = NO_MOVE
+    path_len_total: int = 0
 
-    AGE_LIMIT = 32
+    AGE_LIMIT = ANT_AGE_LIMIT
 
-    def move(self, direction: int) -> None:
-        self.path.append(direction)
+    def __post_init__(self) -> None:
+        if not self.trail_cells:
+            self.trail_cells.append((self.x, self.y))
+
+    def record_move(self, direction: int) -> None:
+        self.path_len_total += 1
+        if direction == NO_MOVE:
+            self.last_move = NO_MOVE
+            return
         off_x, off_y = OFFSET[self.y % 2][direction]
         self.x += off_x
         self.y += off_y
+        self.last_move = direction
+        self.trail_cells.append((self.x, self.y))
+
+    def teleport_to(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+        self.last_move = NO_MOVE
+        self.trail_cells.append((self.x, self.y))
 
     def max_hp(self) -> int:
         return ANT_MAX_HP[self.level]
 
     def reward(self) -> int:
-        return ANT_REWARD[self.level]
+        return ANT_KILL_REWARD[self.level]
 
     def is_alive(self) -> bool:
         return self.state in (AntState.ALIVE, AntState.FROZEN)
 
     def in_range(self, x: int, y: int, radius: int) -> bool:
-        return distance(self.x, self.y, x, y) <= radius
+        return hex_distance(self.x, self.y, x, y) <= radius
 
     def is_attackable_from(self, player: int, x: int, y: int, radius: int) -> bool:
         return self.player != player and self.is_alive() and self.in_range(x, y, radius)
@@ -210,7 +131,9 @@ class Ant:
             AntState(self.state),
             self.evasion,
             self.deflector,
-            list(self.path),
+            list(self.trail_cells),
+            self.last_move,
+            self.path_len_total,
         )
 
 
@@ -246,7 +169,7 @@ class Tower:
 
     def find_targets(self, ants: Sequence[Ant], target_num: int) -> List[int]:
         idxs = self.get_attackable_ants(ants, self.x, self.y, self.range)
-        idxs.sort(key=lambda idx: (distance(ants[idx].x, ants[idx].y, self.x, self.y), idx))
+        idxs.sort(key=lambda idx: (hex_distance(ants[idx].x, ants[idx].y, self.x, self.y), idx))
         return idxs[:target_num]
 
     def find_attackable(self, ants: Sequence[Ant], target_idxs: Sequence[int]) -> List[int]:
@@ -299,26 +222,18 @@ class Tower:
 
     def upgrade(self, new_type: TowerType) -> None:
         self.type = TowerType(new_type)
-        attack, speed, radius = TOWER_INFO[self.type]
-        self.damage = attack
-        self.speed = speed
-        self.range = radius
+        stats = TOWER_STATS[self.type]
+        self.damage = stats.damage
+        self.speed = stats.speed
+        self.range = stats.attack_range
         self.reset_cd()
 
-    def is_upgrade_type_valid(self, target_type: int) -> bool:
+    def is_upgrade_type_valid(self, target_type: int | TowerType) -> bool:
         try:
-            target = TowerType(target_type)
+            target = TowerType(int(target_type))
         except ValueError:
             return False
-        if self.type == TowerType.BASIC:
-            return target in (TowerType.HEAVY, TowerType.QUICK, TowerType.MORTAR)
-        if self.type == TowerType.HEAVY:
-            return target in (TowerType.HEAVY_PLUS, TowerType.ICE, TowerType.CANNON)
-        if self.type == TowerType.QUICK:
-            return target in (TowerType.QUICK_PLUS, TowerType.DOUBLE, TowerType.SNIPER)
-        if self.type == TowerType.MORTAR:
-            return target in (TowerType.MORTAR_PLUS, TowerType.PULSE, TowerType.MISSILE)
-        return False
+        return target in TOWER_UPGRADE_TREE.get(self.type, ())
 
     def downgrade(self) -> None:
         self.upgrade(TowerType(self.type // 10))
@@ -345,7 +260,7 @@ class Base:
         return Base(self.player, self.x, self.y, self.hp, self.gen_speed_level, self.ant_level)
 
     def generate_ant(self, ant_id: int, round_id: int) -> Optional[Ant]:
-        if round_id % GENERATION_CYCLE[self.gen_speed_level] != 0:
+        if round_id % ANT_GENERATION_CYCLE[self.gen_speed_level] != 0:
             return None
         return Ant(ant_id, self.player, self.x, self.y, ANT_MAX_HP[self.ant_level], self.ant_level, 0, AntState.ALIVE)
 
@@ -366,12 +281,12 @@ class SuperWeapon:
     range: int = 0
 
     def __post_init__(self) -> None:
-        duration, radius, _, _ = SUPER_WEAPON_INFO[self.type]
-        self.left_time = duration + 1
-        self.range = radius
+        stats = SUPER_WEAPON_STATS[self.type]
+        self.left_time = stats.duration + 1
+        self.range = stats.attack_range
 
     def in_range(self, x: int, y: int) -> bool:
-        return distance(x, y, self.x, self.y) <= self.range
+        return hex_distance(x, y, self.x, self.y) <= self.range
 
     def clone(self) -> SuperWeapon:
         copied = SuperWeapon(self.type, self.player, self.x, self.y)
@@ -395,19 +310,9 @@ class Operation:
         return " ".join(parts)
 
 
-@dataclass(slots=True)
-class RoundPacket:
-    round: int
-    towers: List[Tower]
-    ants: List[Ant]
-    coin0: int
-    coin1: int
-    hp0: int
-    hp1: int
-
-
 class GameInfo:
     def __init__(self, seed: int) -> None:
+        self.seed = seed
         self.round = 0
         self.towers: List[Tower] = []
         self.ants: List[Ant] = []
@@ -416,7 +321,7 @@ class GameInfo:
         self.pheromone = [[[0.0 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)] for _ in range(2)]
         self.building_tag = [[BuildingType.EMPTY for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
         self.super_weapons: List[SuperWeapon] = []
-        self.super_weapon_cd = [[0 for _ in range(int(SuperWeaponType.COUNT))] for _ in range(2)]
+        self.super_weapon_cd = [[0 for _ in range(5)] for _ in range(2)]
         self.old_count = [0, 0]
         self.die_count = [0, 0]
         self.next_ant_id = 0
@@ -433,6 +338,7 @@ class GameInfo:
 
     def clone(self) -> GameInfo:
         copied = object.__new__(GameInfo)
+        copied.seed = self.seed
         copied.round = self.round
         copied.towers = [tower.clone() for tower in self.towers]
         copied.ants = [ant.clone() for ant in self.ants]
@@ -515,25 +421,16 @@ class GameInfo:
     def update_pheromone(self, ant: Ant) -> None:
         if ant.state in (AntState.ALIVE, AntState.FROZEN):
             return
-        trail_gain = (0.0, 10.0, -5.0, -3.0)
-        delta = trail_gain[int(ant.state)]
-        x, y = ant.x, ant.y
+        trail_gain = {
+            AntState.SUCCESS: 10.0,
+            AntState.FAIL: -5.0,
+            AntState.TOO_OLD: -3.0,
+        }
+        delta = trail_gain.get(ant.state, 0.0)
         seen = [[False for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
-        if 0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE and not seen[x][y]:
-            seen[x][y] = True
-            self.pheromone[ant.player][x][y] += delta
-            if self.pheromone[ant.player][x][y] < PHEROMONE_MIN:
-                self.pheromone[ant.player][x][y] = PHEROMONE_MIN
-        for step in reversed(ant.path):
-            if step == -1:
-                continue
-            if not 0 <= step < 6:
-                break
-            off_x, off_y = OFFSET[y % 2][(step + 3) % 6]
-            x += off_x
-            y += off_y
+        for x, y in reversed(_trail_for_pheromone(ant)):
             if not (0 <= x < MAP_SIZE and 0 <= y < MAP_SIZE):
-                break
+                continue
             if seen[x][y]:
                 continue
             seen[x][y] = True
@@ -690,17 +587,17 @@ class GameInfo:
 
     def next_move(self, ant: Ant) -> int:
         target_x, target_y = BASE_POS[1 - ant.player]
-        current = distance(ant.x, ant.y, target_x, target_y)
+        current = hex_distance(ant.x, ant.y, target_x, target_y)
         weighted = [[-1.0, -1.0] for _ in range(6)]
         attraction = (1.25, 1.0, 0.75)
         for idx, (off_x, off_y) in enumerate(OFFSET[ant.y % 2]):
             x = ant.x + off_x
             y = ant.y + off_y
-            if ant.path and ant.path[-1] == (idx + 3) % 6:
+            if ant.last_move == (idx + 3) % 6:
                 continue
             if not is_path(x, y):
                 continue
-            next_dist = distance(x, y, target_x, target_y)
+            next_dist = hex_distance(x, y, target_x, target_y)
             gain = attraction[next_dist - current + 1]
             weighted[idx][0] = gain * self.pheromone[ant.player][x][y]
             weighted[idx][1] = self.pheromone[ant.player][x][y]
@@ -716,12 +613,12 @@ class GameInfo:
 
     @staticmethod
     def build_tower_cost(tower_num: int) -> int:
-        return int(TOWER_BUILD_PRICE_BASE * pow(TOWER_BUILD_PRICE_RATIO, tower_num))
+        return int(TOWER_BUILD_BASE_COST * pow(TOWER_BUILD_RATIO, tower_num))
 
     @staticmethod
     def upgrade_tower_cost(tower_type: int) -> int:
         if tower_type in (TowerType.HEAVY, TowerType.QUICK, TowerType.MORTAR):
-            return LEVEL2_TOWER_UPGRADE_PRICE
+            return 60
         if tower_type in (
             TowerType.HEAVY_PLUS,
             TowerType.ICE,
@@ -733,7 +630,7 @@ class GameInfo:
             TowerType.PULSE,
             TowerType.MISSILE,
         ):
-            return LEVEL3_TOWER_UPGRADE_PRICE
+            return 200
         return -1
 
     @staticmethod
@@ -746,7 +643,7 @@ class GameInfo:
 
     @staticmethod
     def use_super_weapon_cost(weapon_type: int) -> int:
-        return SUPER_WEAPON_INFO[SuperWeaponType(weapon_type)][3]
+        return SUPER_WEAPON_STATS[SuperWeaponType(weapon_type)].cost
 
     def use_super_weapon(self, weapon_type: SuperWeaponType, player: int, x: int, y: int) -> None:
         weapon = SuperWeapon(weapon_type, player, x, y)
@@ -756,7 +653,7 @@ class GameInfo:
                     ant.evasion = 2
         else:
             self.super_weapons.append(weapon)
-        self.super_weapon_cd[player][int(weapon_type)] = SUPER_WEAPON_INFO[weapon_type][2]
+        self.super_weapon_cd[player][int(weapon_type)] = SUPER_WEAPON_STATS[weapon_type].cooldown
 
     def count_down_super_weapons_left_time(self, player: int) -> None:
         kept: List[SuperWeapon] = []
@@ -820,7 +717,7 @@ class Simulator:
                     if weapon.in_range(ant.x, ant.y):
                         ant.hp = 0
                         ant.state = AntState.FAIL
-                        self.info.coins[weapon.player] += ANT_REWARD[ant.level]
+                        self.info.coins[weapon.player] += ANT_KILL_REWARD[ant.level]
             elif weapon.type == SuperWeaponType.DEFLECTOR and weapon.player == 1 - perspective:
                 for ant in self.info.ants:
                     if weapon.in_range(ant.x, ant.y):
@@ -836,17 +733,17 @@ class Simulator:
             targets = tower.attack(self.info.ants)
             for idx in targets:
                 if self.info.ants[idx].state == AntState.FAIL:
-                    self.info.coins[tower.player] += ANT_REWARD[self.info.ants[idx].level]
+                    self.info.coins[tower.player] += ANT_KILL_REWARD[self.info.ants[idx].level]
 
         for ant in self.info.ants:
             ant.age += 1
-            if ant.state == AntState.FAIL:
-                continue
-            if ant.age > Ant.AGE_LIMIT:
+            if ant.state != AntState.FAIL and ant.age > Ant.AGE_LIMIT:
                 ant.state = AntState.TOO_OLD
+            direction = NO_MOVE
             if ant.state == AntState.ALIVE:
-                ant.move(self.info.next_move(ant))
-            if (ant.x, ant.y) == BASE_POS[1 - ant.player]:
+                direction = self.info.next_move(ant)
+            ant.record_move(direction)
+            if ant.state != AntState.FAIL and (ant.x, ant.y) == BASE_POS[1 - ant.player]:
                 ant.state = AntState.SUCCESS
                 self.info.bases[1 - ant.player].hp -= 1
                 self.info.coins[ant.player] += 5
@@ -859,7 +756,7 @@ class Simulator:
         for x in range(MAP_SIZE):
             for y in range(MAP_SIZE):
                 if MAP_PROPERTY[x][y] >= 0:
-                    self.info.pheromone[enemy][x][y] = PHEROMONE_ATTENUATING_RATIO * self.info.pheromone[enemy][x][y] + 0.3
+                    self.info.pheromone[enemy][x][y] = PHEROMONE_ATTENUATING_RATIO * self.info.pheromone[enemy][x][y] + (1 - PHEROMONE_ATTENUATING_RATIO) * PHEROMONE_INIT
         for ant in self.info.ants:
             self.info.update_pheromone(ant)
 
@@ -874,14 +771,15 @@ class Simulator:
         self.info.ants = survivors
 
         base = self.info.bases[enemy]
-        if self.info.round % GENERATION_CYCLE[base.gen_speed_level] == 0:
-            self.info.ants.append(Ant(self.info.next_ant_id, enemy, base.x, base.y, ANT_MAX_HP[base.ant_level], base.ant_level, 0, AntState.ALIVE))
+        spawned = base.generate_ant(self.info.next_ant_id, self.info.round)
+        if spawned is not None:
+            self.info.ants.append(spawned)
             self.info.next_ant_id += 1
 
-        self.info.coins[0] += 1
-        self.info.coins[1] += 1
+        self.info.coins[0] += BASIC_INCOME
+        self.info.coins[1] += BASIC_INCOME
         if self.info.round % 3 != 0:
-            self.info.coins[enemy] += 1
+            self.info.coins[enemy] += BASIC_INCOME
 
         self.info.round += 1
         for player in range(2):
@@ -892,180 +790,112 @@ class Simulator:
         return True
 
 
-class TokenScanner:
-    def __init__(self) -> None:
-        self._queue: Deque[bytes] = deque()
-        self._reader = sys.stdin.buffer
+def build_forecast_state(state) -> GameInfo:
+    info = GameInfo(int(state.seed))
+    info.round = int(state.round_index)
+    info.coins = [int(value) for value in state.coins]
+    info.old_count = [int(value) for value in state.old_count]
+    info.die_count = [int(value) for value in state.die_count]
+    info.next_ant_id = int(state.next_ant_id)
+    info.next_tower_id = int(state.next_tower_id)
+    info.super_weapon_cd = [[int(value) for value in row] for row in state.weapon_cooldowns.tolist()]
 
-    def _fill(self) -> None:
-        while not self._queue:
-            line = self._reader.readline()
-            if not line:
-                raise EOFError
-            self._queue.extend(line.split())
+    info.bases = [
+        Base(
+            player=base.player,
+            x=base.x,
+            y=base.y,
+            hp=base.hp,
+            gen_speed_level=base.generation_level,
+            ant_level=base.ant_level,
+        )
+        for base in state.bases
+    ]
 
-    def next_int(self) -> int:
-        self._fill()
-        return int(self._queue.popleft())
+    info.building_tag = [[BuildingType.EMPTY for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+    for base in info.bases:
+        info.building_tag[base.x][base.y] = BuildingType.BASE
+
+    info.towers = []
+    for tower in state.towers:
+        info.towers.append(
+            Tower(
+                id=tower.tower_id,
+                player=tower.player,
+                x=tower.x,
+                y=tower.y,
+                type=TowerType(int(tower.tower_type)),
+                cd=tower.display_cooldown(),
+            )
+        )
+        info.building_tag[tower.x][tower.y] = BuildingType.TOWER
+
+    info.ants = [
+        Ant(
+            id=ant.ant_id,
+            player=ant.player,
+            x=ant.x,
+            y=ant.y,
+            hp=ant.hp,
+            level=ant.level,
+            age=ant.age,
+            state=AntState(int(ant.status)),
+            evasion=2 if ant.evasion else 0,
+            deflector=bool(ant.deflector),
+            trail_cells=list(ant.trail_cells),
+            last_move=int(ant.last_move),
+            path_len_total=int(ant.path_len_total),
+        )
+        for ant in state.ants
+    ]
+
+    info.pheromone = [
+        [
+            [state.pheromone[player, x, y] / float(PHEROMONE_SCALE) for y in range(MAP_SIZE)]
+            for x in range(MAP_SIZE)
+        ]
+        for player in range(2)
+    ]
+
+    info.super_weapons = []
+    for effect in state.active_effects:
+        weapon = SuperWeapon(
+            type=SuperWeaponType(int(effect.weapon_type)),
+            player=effect.player,
+            x=effect.x,
+            y=effect.y,
+        )
+        weapon.left_time = effect.remaining_turns
+        info.super_weapons.append(weapon)
+    return info
 
 
-def read_init_info(scanner: TokenScanner) -> Tuple[int, int]:
-    return scanner.next_int(), scanner.next_int()
+ForecastState = GameInfo
+ForecastOperation = Operation
+ForecastSimulator = Simulator
 
 
-def read_operations(scanner: TokenScanner) -> List[Operation]:
-    count = scanner.next_int()
-    ops: List[Operation] = []
-    for _ in range(count):
-        op_type = OperationType(scanner.next_int())
-        if op_type in (OperationType.UPGRADE_GENERATED_ANT, OperationType.UPGRADE_GENERATION_SPEED):
-            ops.append(Operation(op_type))
-        elif op_type == OperationType.DOWNGRADE_TOWER:
-            ops.append(Operation(op_type, scanner.next_int()))
-        else:
-            ops.append(Operation(op_type, scanner.next_int(), scanner.next_int()))
-    return ops
-
-
-def read_round_packet(scanner: TokenScanner) -> RoundPacket:
-    round_id = scanner.next_int()
-    tower_count = scanner.next_int()
-    towers: List[Tower] = []
-    for _ in range(tower_count):
-        tower_id = scanner.next_int()
-        player = scanner.next_int()
-        x = scanner.next_int()
-        y = scanner.next_int()
-        tower_type = TowerType(scanner.next_int())
-        cd = scanner.next_int()
-        towers.append(Tower(tower_id, player, x, y, tower_type, cd))
-    ant_count = scanner.next_int()
-    ants: List[Ant] = []
-    for _ in range(ant_count):
-        ant_id = scanner.next_int()
-        player = scanner.next_int()
-        x = scanner.next_int()
-        y = scanner.next_int()
-        hp = scanner.next_int()
-        level = scanner.next_int()
-        age = scanner.next_int()
-        state = AntState(scanner.next_int())
-        ants.append(Ant(ant_id, player, x, y, hp, level, age, state))
-    coin0 = scanner.next_int()
-    coin1 = scanner.next_int()
-    hp0 = scanner.next_int()
-    hp1 = scanner.next_int()
-    return RoundPacket(round_id, towers, ants, coin0, coin1, hp0, hp1)
-
-
-def send_operations(ops: Sequence[Operation]) -> None:
-    body = [str(len(ops))]
-    body.extend(op.to_line() for op in ops)
-    payload = ("\n".join(body) + "\n").encode()
-    sys.stdout.buffer.write(struct.pack(">I", len(payload)))
-    sys.stdout.buffer.write(payload)
-    sys.stdout.buffer.flush()
-
-
-class Controller:
-    def __init__(self, scanner: Optional[TokenScanner] = None) -> None:
-        self.scanner = scanner or TokenScanner()
-        self.self_player_id, seed = read_init_info(self.scanner)
-        self.info = GameInfo(seed)
-        self.self_operations: List[Operation] = []
-        self.opponent_operations: List[Operation] = []
-
-    def get_info(self) -> GameInfo:
-        return self.info
-
-    def get_self_operations(self) -> Sequence[Operation]:
-        return self.self_operations
-
-    def get_opponent_operations(self) -> Sequence[Operation]:
-        return self.opponent_operations
-
-    def _update_towers(self, new_towers: List[Tower]) -> None:
-        for tower in self.info.towers:
-            self.info.building_tag[tower.x][tower.y] = BuildingType.EMPTY
-        self.info.towers = new_towers
-        for tower in self.info.towers:
-            self.info.building_tag[tower.x][tower.y] = BuildingType.TOWER
-        self.info.next_tower_id = 0 if not self.info.towers else self.info.towers[-1].id + 1
-
-    def _update_ant(self, fresh: Ant) -> None:
-        for ant in self.info.ants:
-            if ant.id != fresh.id:
-                continue
-            if (ant.x, ant.y) != (fresh.x, fresh.y):
-                ant.path.append(get_direction(ant.x, ant.y, fresh.x, fresh.y))
-            ant.x = fresh.x
-            ant.y = fresh.y
-            ant.hp = fresh.hp
-            ant.age = fresh.age
-            ant.state = fresh.state
-            return
-        self.info.ants.append(fresh)
-
-    def _update_ants(self, ants: Iterable[Ant]) -> None:
-        for ant in ants:
-            self._update_ant(ant)
-        self.info.next_ant_id = 0 if not self.info.ants else self.info.ants[-1].id + 1
-
-    def read_round_info(self) -> None:
-        for weapon in self.info.super_weapons:
-            if weapon.type != SuperWeaponType.LIGHTNING_STORM:
-                continue
-            for ant in self.info.ants:
-                if weapon.in_range(ant.x, ant.y) and ant.player != weapon.player:
-                    ant.hp = 0
-                    ant.state = AntState.FAIL
-                    self.info.update_coin(weapon.player, ant.reward())
-
-        for ant in self.info.ants:
-            ant.deflector = self.info.is_shielded_by_deflector(ant)
-        for tower in self.info.towers:
-            if self.info.tower_under_emp(tower):
-                continue
-            targets = tower.attack(self.info.ants)
-            for idx in targets:
-                if self.info.ants[idx].state == AntState.FAIL:
-                    self.info.update_coin(tower.player, self.info.ants[idx].reward())
-        for ant in self.info.ants:
-            ant.deflector = False
-
-        packet = read_round_packet(self.scanner)
-        self._update_towers(packet.towers)
-        self._update_ants(packet.ants)
-        self.info.global_pheromone_attenuation()
-        self.info.update_pheromone_for_ants()
-        self.info.clear_dead_and_succeeded_ants()
-        self.info.set_coin(0, packet.coin0)
-        self.info.set_coin(1, packet.coin1)
-        self.info.set_base_hp(0, packet.hp0)
-        self.info.set_base_hp(1, packet.hp1)
-        self.info.round = packet.round
-        self.info.count_down_super_weapons_cd()
-        self.self_operations.clear()
-        self.opponent_operations.clear()
-
-    def read_opponent_operations(self) -> None:
-        self.opponent_operations = read_operations(self.scanner)
-
-    def apply_opponent_operations(self) -> None:
-        self.info.count_down_super_weapons_left_time(1 - self.self_player_id)
-        for op in self.opponent_operations:
-            self.info.apply_operation(1 - self.self_player_id, op)
-
-    def append_self_operation(self, op: Operation) -> bool:
-        if self.info.is_operation_sequence_valid(self.self_player_id, self.self_operations, op):
-            self.self_operations.append(op)
-            return True
-        return False
-
-    def apply_self_operations(self) -> None:
-        self.info.count_down_super_weapons_left_time(self.self_player_id)
-        for op in self.self_operations:
-            self.info.apply_operation(self.self_player_id, op)
-
-    def send_self_operations(self) -> None:
-        send_operations(self.self_operations)
+__all__ = [
+    "Ant",
+    "AntState",
+    "BASE_POS",
+    "Base",
+    "BuildingType",
+    "ForecastOperation",
+    "ForecastSimulator",
+    "ForecastState",
+    "GameInfo",
+    "MAP_PROPERTY",
+    "MAP_SIZE",
+    "MAX_ROUND",
+    "Operation",
+    "OperationType",
+    "Simulator",
+    "SuperWeapon",
+    "SuperWeaponType",
+    "Tower",
+    "TowerType",
+    "build_forecast_state",
+    "hex_distance",
+    "is_valid_pos",
+]

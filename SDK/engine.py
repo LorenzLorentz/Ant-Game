@@ -50,7 +50,7 @@ from SDK.constants import (
     LEVEL3_TOWER_UPGRADE_COST,
 )
 from SDK.geometry import hex_distance, is_highland, is_path, is_valid_pos, neighbors
-from SDK.model import Ant, Base, Operation, Tower, WeaponEffect
+from SDK.model import NO_MOVE, Ant, Base, Operation, Tower, WeaponEffect
 
 RNG_MASK = (1 << 48) - 1
 RNG_MULTIPLIER = 25214903917
@@ -83,11 +83,18 @@ def _softmax_choice(weights: list[float], temperature: float) -> list[float]:
     return [value / total for value in exps]
 
 
+def _trail_for_pheromone(ant: Ant) -> list[tuple[int, int]]:
+    trail = list(ant.trail_cells)
+    if not trail or trail[-1] != (ant.x, ant.y):
+        trail.append((ant.x, ant.y))
+    return trail
+
+
 @dataclass(slots=True)
 class PublicRoundState:
     round_index: int
     towers: list[tuple[int, int, int, int, int, int]]
-    ants: list[tuple[int, int, int, int, int, int, int, int]]
+    ants: list[tuple[int, int, int, int, int, int, int, int, int]]
     coins: tuple[int, int]
     camps_hp: tuple[int, int]
 
@@ -319,6 +326,9 @@ class GameState:
         if operation.op_type == OperationType.UPGRADE_GENERATED_ANT:
             return -self.upgrade_base_cost(self.bases[player].ant_level)
         return 0
+
+    def operation_income(self, player: int, operation: Operation, tower_count_hint: int | None = None) -> int:
+        return self._operation_income(player, operation, tower_count_hint)
 
     def can_apply_operation(self, player: int, operation: Operation, pending: Iterable[Operation] = ()) -> bool:
         pending_list = list(pending)
@@ -586,7 +596,7 @@ class GameState:
         enemy_base = PLAYER_BASES[1 - ant.player]
         own_base = PLAYER_BASES[ant.player]
         for direction, nx, ny in neighbors(ant.x, ant.y):
-            if not allow_backtrack and ant.path and ant.path[-1] == (direction + 3) % 6:
+            if not allow_backtrack and ant.last_move == (direction + 3) % 6:
                 continue
             if (nx, ny) not in (enemy_base, own_base) and not is_path(nx, ny):
                 continue
@@ -670,21 +680,16 @@ class GameState:
             if not legal_cells:
                 break
             target_x, target_y = legal_cells[self._random_index(len(legal_cells))]
-            ant.x = target_x
-            ant.y = target_y
+            ant.teleport_to(target_x, target_y)
             ant.refresh_status()
 
     def _move_ants(self) -> None:
         for ant in self.ants:
             ant.refresh_status()
-            direction = -1
+            direction = NO_MOVE
             if ant.status == AntStatus.ALIVE:
                 direction = self._choose_ant_move(ant)
-            ant.path.append(direction)
-            if direction != -1:
-                dx, dy = OFFSET[ant.y % 2][direction]
-                ant.x += dx
-                ant.y += dy
+            ant.record_move(direction)
             ant.refresh_status()
         self._teleport_ants()
 
@@ -706,23 +711,9 @@ class GameState:
             else:
                 continue
             visited: set[tuple[int, int]] = set()
-            x, y = ant.x, ant.y
-            if (x, y) not in visited:
-                self.pheromone[ant.player, x, y] = max(0, self.pheromone[ant.player, x, y] + delta)
-                visited.add((x, y))
-            for direction in reversed(ant.path):
-                if direction == -1:
+            for x, y in reversed(_trail_for_pheromone(ant)):
+                if not is_valid_pos(x, y):
                     continue
-                if not 0 <= direction < len(OFFSET[y % 2]):
-                    break
-                backtrack = (direction + 3) % 6
-                dx, dy = OFFSET[y % 2][backtrack]
-                next_x = x + dx
-                next_y = y + dy
-                if not is_valid_pos(next_x, next_y):
-                    break
-                x = next_x
-                y = next_y
                 if (x, y) in visited:
                     continue
                 self.pheromone[ant.player, x, y] = max(0, self.pheromone[ant.player, x, y] + delta)
@@ -875,7 +866,7 @@ class GameState:
             for tower in sorted(self.towers, key=lambda item: item.tower_id)
         ]
         ants = [
-            (ant.ant_id, ant.player, ant.x, ant.y, ant.hp, ant.level, ant.age, int(ant.status))
+            (ant.ant_id, ant.player, ant.x, ant.y, ant.hp, ant.level, ant.age, int(ant.status), int(ant.behavior))
             for ant in sorted(self.ants, key=lambda item: item.ant_id)
         ]
         return PublicRoundState(
@@ -903,7 +894,9 @@ class GameState:
         self.towers = synced_towers
         ant_map = {ant.ant_id: ant for ant in self.ants}
         synced_ants: list[Ant] = []
-        for ant_id, player, x, y, hp, level, public_age, status in public_state.ants:
+        for ant_row in public_state.ants:
+            ant_id, player, x, y, hp, level, public_age, status = ant_row[:8]
+            public_behavior = AntBehavior(ant_row[8]) if len(ant_row) >= 9 else None
             ant = ant_map.get(ant_id, Ant(ant_id, player, x, y, hp, level, age=0, status=AntStatus(status)))
             ant.player = player
             ant.x = x
@@ -913,6 +906,13 @@ class GameState:
             ant.age = public_age
             ant.status = AntStatus(status)
             ant.frozen = ant.status == AntStatus.FROZEN
+            if public_behavior is not None:
+                if ant.behavior != public_behavior:
+                    ant.behavior_turns = 0
+                ant.behavior = public_behavior
+                if ant.behavior != AntBehavior.BEWITCHED:
+                    ant.bewitch_target_x = -1
+                    ant.bewitch_target_y = -1
             synced_ants.append(ant)
         self.ants = synced_ants
         if self.towers:

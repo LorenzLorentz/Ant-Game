@@ -18,7 +18,7 @@ int distance(Pos a, Pos b) {
 }
 
 bool Map::is_empty(int x, int y, int player) const {
-    if (x > MAP_SIZE || y > MAP_SIZE || x < 0 || y < 0)
+    if (x >= MAP_SIZE || y >= MAP_SIZE || x < 0 || y < 0)
         return false;
     if (map[x][y].base_camp != nullptr)
         return false;

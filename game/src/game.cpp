@@ -221,8 +221,8 @@ int Game::choose_ant_move(const Ant &ant) {
         for (int direction = 0; direction < 6; ++direction) {
             int nx = ant.get_x() + ant_dx[ant.get_y() % 2][direction][0];
             int ny = ant.get_y() + ant_dx[ant.get_y() % 2][direction][1];
-            if (!allow_reverse && !ant.path.empty() &&
-                ant.path.back() == ((direction + 3) % 6))
+            if (!allow_reverse && ant.get_last_move() >= 0 &&
+                ant.get_last_move() == ((direction + 3) % 6))
                 continue;
             if (!ant_can_walk_to(nx, ny))
                 continue;
@@ -551,7 +551,6 @@ void Game::move_ants()
         if (ant.get_status() == Ant::Status::Alive) {
             move = choose_ant_move(ant);
         }
-        ant.path.push_back(move);
         ant.move(move);
     }
 }
@@ -840,7 +839,7 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
                 err_msg = "TowerBuild: position is not empty";
                 return false;
             }*/
-            if (x > MAP_SIZE || y > MAP_SIZE || x < 0 || y < 0)
+            if (x >= MAP_SIZE || y >= MAP_SIZE || x < 0 || y < 0)
             {
                 char msg[100];
                 sprintf(msg, "TowerBuild: position out of range (at %d, %d)", x, y);

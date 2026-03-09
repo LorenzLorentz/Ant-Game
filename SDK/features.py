@@ -17,8 +17,8 @@ from SDK.constants import (
     SuperWeaponType,
     SUPER_WEAPON_STATS,
 )
-from SDK.engine import GameState
 from SDK.geometry import hex_distance
+from SDK.backend.state import BackendState
 
 
 @dataclass(slots=True)
@@ -31,7 +31,7 @@ class FeatureExtractor:
     def __init__(self, max_actions: int = MAX_ACTIONS) -> None:
         self.max_actions = max_actions
 
-    def summarize(self, state: GameState, player: int) -> StateFeatures:
+    def summarize(self, state: BackendState, player: int) -> StateFeatures:
         enemy = 1 - player
         my_towers = state.towers_of(player)
         enemy_towers = state.towers_of(enemy)
@@ -83,7 +83,7 @@ class FeatureExtractor:
         values = np.array(list(named.values()), dtype=np.float32)
         return StateFeatures(values=values, named=named)
 
-    def encode_board(self, state: GameState, player: int) -> np.ndarray:
+    def encode_board(self, state: BackendState, player: int) -> np.ndarray:
         enemy = 1 - player
         board = np.zeros((28, MAP_SIZE, MAP_SIZE), dtype=np.float32)
         for x in range(MAP_SIZE):
@@ -137,7 +137,7 @@ class FeatureExtractor:
                         board[channel, x, y] = max(board[channel, x, y], strength)
         return board
 
-    def encode_stats(self, state: GameState, player: int) -> np.ndarray:
+    def encode_stats(self, state: BackendState, player: int) -> np.ndarray:
         enemy = 1 - player
         features = self.summarize(state, player).values
         extras = np.array(
@@ -161,7 +161,7 @@ class FeatureExtractor:
         )
         return np.concatenate([features, extras], dtype=np.float32)
 
-    def encode_observation(self, state: GameState, player: int, action_mask: np.ndarray) -> dict[str, np.ndarray]:
+    def encode_observation(self, state: BackendState, player: int, action_mask: np.ndarray) -> dict[str, np.ndarray]:
         return {
             "board": self.encode_board(state, player),
             "stats": self.encode_stats(state, player),
@@ -173,7 +173,7 @@ class FeatureExtractor:
         stats = observation["stats"].reshape(-1)
         return np.concatenate([board, stats], dtype=np.float32)
 
-    def evaluate(self, state: GameState, player: int) -> float:
+    def evaluate(self, state: BackendState, player: int) -> float:
         summary = self.summarize(state, player).named
         value = 0.0
         value += summary["hp_delta"] * 15.0

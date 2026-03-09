@@ -1,5 +1,6 @@
 #include "../include/output.h"
 #include <fstream>
+#include <iomanip>
 #include <type_traits>
 
 using json = nlohmann::json;
@@ -22,6 +23,13 @@ NLOHMANN_JSON_SERIALIZE_ENUM(Ant::Status, {{Ant::Status::Alive, 0},
                                            {Ant::Status::TooOld, 3},
                                            {Ant::Status::Frozen, 4}})
 
+// Serialize Ant::Behavior.
+NLOHMANN_JSON_SERIALIZE_ENUM(Ant::Behavior, {{Ant::Behavior::Default, 0},
+                                             {Ant::Behavior::Conservative, 1},
+                                             {Ant::Behavior::Randomized, 2},
+                                             {Ant::Behavior::Bewitched, 3},
+                                             {Ant::Behavior::ControlFree, 4}})
+
 // Serialize Ant.
 inline void to_json(json &j, const Ant &ant) {
     j = json{{"player", ant.get_player()},
@@ -29,10 +37,11 @@ inline void to_json(json &j, const Ant &ant) {
              {"pos", {{"x", ant.get_x()}, {"y", ant.get_y()}}},
              {"hp", ant.get_hp()},
              // Use -1 to indicate that this is a new ant without any move
-             {"move", ant.path.empty() ? -1 : ant.path.back()},
+             {"move", ant.get_last_move()},
              {"level", ant.get_level()},
              {"age", ant.get_age()},
-             {"status", ant.get_status()}};
+             {"status", ant.get_status()},
+             {"behavior", ant.get_behavior()}};
 }
 
 // Add a Ant into the json object.
@@ -165,7 +174,7 @@ void Output::add_error(const std::string &error) { cur["error"] = error; }
 // Dump current data to a file.
 void Output::dump_cur(const std::string &file_name) const {
     std::ofstream fout(file_name, std::ios::trunc);
-    fout << cur;
+    fout << std::setw(2) << cur << '\n';
     fout.close();
 }
 
@@ -173,7 +182,7 @@ void Output::dump_cur(const std::string &file_name) const {
 void Output::dump_all(const std::string &file_name) const {
     std::ofstream fout(file_name);
 
-    fout << data << std::endl;
+    fout << std::setw(2) << data << '\n';
 
     fout.close();
 }

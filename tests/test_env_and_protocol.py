@@ -4,8 +4,8 @@ import io
 import struct
 
 from AI.protocol import ProtocolIO
-from SDK.pettingzoo_env import AntWarParallelEnv
 from SDK.model import Operation
+from SDK.training import AntWarParallelEnv
 from SDK.constants import OperationType
 
 
@@ -30,7 +30,7 @@ def test_protocol_send_and_receive_round_state() -> None:
         b"1\n"
         b"0 0 6 9 0 1\n"
         b"1\n"
-        b"0 0 2 9 10 0 0 0\n"
+        b"0 0 2 9 10 0 0 0 0\n"
         b"51 51\n"
         b"50 50\n"
     )

@@ -8,15 +8,15 @@ try:
 except ModuleNotFoundError as exc:
     if exc.name != "common":
         raise
-    from AI.common import BaseAgent
+from AI.common import BaseAgent
 
 from SDK.actions import ActionBundle
-from SDK.engine import GameState
+from SDK.backend.state import BackendState
 
 
 @dataclass(slots=True)
 class SearchNode:
-    state: GameState
+    state: BackendState
     player: int
     bundle: ActionBundle | None = None
     visits: int = 0
@@ -43,7 +43,7 @@ class PhaseWeights:
 
 
 class HeuristicFallbackAgent(BaseAgent):
-    def _phase_weights(self, state: GameState, player: int) -> PhaseWeights:
+    def _phase_weights(self, state: BackendState, player: int) -> PhaseWeights:
         hp_delta = state.bases[player].hp - state.bases[1 - player].hp
         nearest_enemy = state.nearest_ant_distance(player)
         safe_coin = state.coins[player] - state.safe_coin_threshold(player)
@@ -55,13 +55,13 @@ class HeuristicFallbackAgent(BaseAgent):
             return PhaseWeights(hp=1.0, safety=1.3, tempo=0.5, offense=0.2, economy=1.4)
         return PhaseWeights(hp=1.1, safety=1.0, tempo=1.0, offense=0.9, economy=0.9)
 
-    def _predict_enemy_bundle(self, state: GameState, player: int) -> ActionBundle:
+    def _predict_enemy_bundle(self, state: BackendState, player: int) -> ActionBundle:
         enemy_bundles = self.list_bundles(state, 1 - player)
         return enemy_bundles[0] if enemy_bundles else self.list_bundles(state, player)[0]
 
     def _score_bundle(
         self,
-        state: GameState,
+        state: BackendState,
         player: int,
         bundle: ActionBundle,
         enemy_bundle: ActionBundle,
@@ -87,7 +87,7 @@ class HeuristicFallbackAgent(BaseAgent):
             score -= 8.0
         return score
 
-    def choose_bundle(self, state: GameState, player: int, bundles: list[ActionBundle] | None = None) -> ActionBundle:
+    def choose_bundle(self, state: BackendState, player: int, bundles: list[ActionBundle] | None = None) -> ActionBundle:
         bundles = bundles or self.list_bundles(state, player)
         enemy_bundle = self._predict_enemy_bundle(state, player)
         shortlist = bundles[: min(18, len(bundles))]
@@ -126,7 +126,7 @@ class MCTSAgent(BaseAgent):
         exploration = 1.25 * child.prior * math.sqrt(parent.visits + 1) / (child.visits + 1)
         return child.mean_value + exploration
 
-    def _rollout(self, state: GameState, player: int, depth: int) -> float:
+    def _rollout(self, state: BackendState, player: int, depth: int) -> float:
         rollout = state.clone()
         for _ in range(depth, self.max_depth):
             if rollout.terminal:
@@ -155,7 +155,7 @@ class MCTSAgent(BaseAgent):
             current.visits += 1
             current.value_sum += value
 
-    def choose_bundle(self, state: GameState, player: int, bundles: list[ActionBundle] | None = None) -> ActionBundle:
+    def choose_bundle(self, state: BackendState, player: int, bundles: list[ActionBundle] | None = None) -> ActionBundle:
         bundles = bundles or self.list_bundles(state, player)
         root = SearchNode(
             state=state.clone(),

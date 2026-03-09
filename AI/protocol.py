@@ -12,8 +12,8 @@ except ModuleNotFoundError as exc:
         raise
     from AI.common import BaseAgent, MatchSession
 
-from SDK.engine import PublicRoundState
-from SDK.runtime import MatchRuntime
+from SDK.backend.engine import PublicRoundState
+from SDK.backend.runtime import MatchRuntime
 from SDK.model import Operation
 from SDK.constants import OperationType
 

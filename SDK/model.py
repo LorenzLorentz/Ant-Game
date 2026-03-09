@@ -9,6 +9,7 @@ from SDK.constants import (
     ANT_MAX_HP,
     ANT_GENERATION_CYCLE,
     AntStatus,
+    OFFSET,
     OperationType,
     PLAYER_BASES,
     SuperWeaponType,
@@ -17,6 +18,8 @@ from SDK.constants import (
     TowerType,
 )
 from SDK.geometry import hex_distance
+
+NO_MOVE = -1
 
 
 @dataclass(slots=True)
@@ -51,7 +54,9 @@ class Ant:
     level: int
     age: int = 0
     status: AntStatus = AntStatus.ALIVE
-    path: list[int] = field(default_factory=list)
+    trail_cells: list[tuple[int, int]] = field(default_factory=list)
+    last_move: int = NO_MOVE
+    path_len_total: int = 0
     shield: int = 0
     deflector: bool = False
     frozen: bool = False
@@ -61,6 +66,10 @@ class Ant:
     bewitch_target_x: int = -1
     bewitch_target_y: int = -1
     pending_behavior: AntBehavior | None = None
+
+    def __post_init__(self) -> None:
+        if not self.trail_cells:
+            self.trail_cells.append((self.x, self.y))
 
     def clone(self) -> Ant:
         return Ant(
@@ -72,7 +81,9 @@ class Ant:
             level=self.level,
             age=self.age,
             status=self.status,
-            path=list(self.path),
+            trail_cells=list(self.trail_cells),
+            last_move=self.last_move,
+            path_len_total=self.path_len_total,
             shield=self.shield,
             deflector=self.deflector,
             frozen=self.frozen,
@@ -83,6 +94,23 @@ class Ant:
             bewitch_target_y=self.bewitch_target_y,
             pending_behavior=self.pending_behavior,
         )
+
+    def record_move(self, direction: int) -> None:
+        self.path_len_total += 1
+        if direction == NO_MOVE:
+            self.last_move = NO_MOVE
+            return
+        dx, dy = OFFSET[self.y % 2][direction]
+        self.x += dx
+        self.y += dy
+        self.last_move = direction
+        self.trail_cells.append((self.x, self.y))
+
+    def teleport_to(self, x: int, y: int) -> None:
+        self.x = x
+        self.y = y
+        self.last_move = NO_MOVE
+        self.trail_cells.append((self.x, self.y))
 
     @property
     def max_hp(self) -> int:

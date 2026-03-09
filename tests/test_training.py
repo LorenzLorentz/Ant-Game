@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from SDK.pettingzoo_env import AntWarParallelEnv
+from SDK.training import AntWarParallelEnv
 from SDK.training.base import BaseSelfPlayTrainer
 from SDK.training.selfplay import LinearSelfPlayTrainer, TrainerConfig
 

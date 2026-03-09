@@ -95,27 +95,58 @@ def test_lightning_and_emp_effects_drift_each_tick() -> None:
 
 def test_public_round_state_serializes_true_age() -> None:
     state = GameState.initial(seed=5)
-    state.ants.append(Ant(7, 0, 4, 9, hp=10, level=0, age=12, path=[4, 4], status=AntStatus.ALIVE))
+    state.ants.append(
+        Ant(
+            7,
+            0,
+            4,
+            9,
+            hp=10,
+            level=0,
+            age=12,
+            trail_cells=[(2, 9), (3, 9), (4, 9)],
+            last_move=4,
+            path_len_total=2,
+            status=AntStatus.ALIVE,
+            behavior=AntBehavior.CONTROL_FREE,
+        )
+    )
     public_state = state.to_public_round_state()
     assert public_state.ants[0][6] == 12
+    assert public_state.ants[0][8] == int(AntBehavior.CONTROL_FREE)
 
 
-def test_sync_public_round_state_updates_visible_age_and_preserves_hidden_behavior() -> None:
+def test_sync_public_round_state_updates_visible_age_and_syncs_public_behavior() -> None:
     state = GameState.initial(seed=3)
-    ant = Ant(8, 0, 4, 9, hp=10, level=0, age=9, path=[4, 4, 1], behavior=AntBehavior.RANDOM)
+    ant = Ant(
+        8,
+        0,
+        4,
+        9,
+        hp=10,
+        level=0,
+        age=9,
+        trail_cells=[(2, 9), (3, 9), (4, 9)],
+        last_move=1,
+        path_len_total=3,
+        behavior=AntBehavior.RANDOM,
+    )
     state.ants.append(ant)
     public_state = PublicRoundState(
         round_index=0,
         towers=[],
-        ants=[(8, 0, 5, 9, 8, 0, 5, 0)],
+        ants=[(8, 0, 5, 9, 8, 0, 5, 0, int(AntBehavior.CONSERVATIVE))],
         coins=(50, 50),
         camps_hp=(50, 50),
     )
     state.sync_public_round_state(public_state)
     synced = state.ants[0]
     assert synced.age == 5
-    assert synced.behavior == AntBehavior.RANDOM
-    assert synced.path == [4, 4, 1]
+    assert synced.behavior == AntBehavior.CONSERVATIVE
+    assert synced.behavior_turns == 0
+    assert synced.trail_cells == [(2, 9), (3, 9), (4, 9)]
+    assert synced.last_move == 1
+    assert synced.path_len_total == 3
 
 
 def test_sync_public_round_state_maps_frozen_status_to_hidden_flag() -> None:
@@ -125,7 +156,7 @@ def test_sync_public_round_state_maps_frozen_status_to_hidden_flag() -> None:
     public_state = PublicRoundState(
         round_index=0,
         towers=[],
-        ants=[(9, 0, 4, 9, 10, 0, 3, int(AntStatus.FROZEN))],
+        ants=[(9, 0, 4, 9, 10, 0, 3, int(AntStatus.FROZEN), int(AntBehavior.DEFAULT))],
         coins=(50, 50),
         camps_hp=(50, 50),
     )
@@ -138,7 +169,19 @@ def test_sync_public_round_state_maps_frozen_status_to_hidden_flag() -> None:
 
 def test_update_pheromone_walks_backwards_from_current_position() -> None:
     state = GameState.initial(seed=1)
-    ant = Ant(3, 0, 6, 9, hp=0, level=0, age=4, path=[4], status=AntStatus.FAIL)
+    ant = Ant(
+        3,
+        0,
+        6,
+        9,
+        hp=0,
+        level=0,
+        age=4,
+        trail_cells=[(5, 9), (6, 9)],
+        last_move=4,
+        path_len_total=1,
+        status=AntStatus.FAIL,
+    )
     state.ants.append(ant)
     before_current = int(state.pheromone[0, 6, 9])
     before_backtrack = int(state.pheromone[0, 5, 9])
@@ -150,6 +193,45 @@ def test_update_pheromone_walks_backwards_from_current_position() -> None:
     assert int(state.pheromone[0, 6, 9]) == attenuated_current + PHEROMONE_FAIL_BONUS_INT
     assert int(state.pheromone[0, 5, 9]) == attenuated_backtrack + PHEROMONE_FAIL_BONUS_INT
     assert int(state.pheromone[0, 2, 9]) == attenuated_base
+
+
+def test_teleport_keeps_trail_for_pheromone_and_resets_last_move() -> None:
+    state = GameState.initial(seed=1)
+    ant = Ant(
+        13,
+        0,
+        4,
+        9,
+        hp=0,
+        level=0,
+        age=4,
+        trail_cells=[(2, 9), (3, 9), (4, 9)],
+        last_move=4,
+        path_len_total=2,
+        status=AntStatus.FAIL,
+    )
+    ant.teleport_to(10, 9)
+    state.ants.append(ant)
+    before_origin = int(state.pheromone[0, 4, 9])
+    before_target = int(state.pheromone[0, 10, 9])
+    state._update_pheromone()
+    attenuated_origin = max(0, (LAMBDA_NUM * before_origin + TAU_BASE_ADD_INT + 50) // LAMBDA_DENOM)
+    attenuated_target = max(0, (LAMBDA_NUM * before_target + TAU_BASE_ADD_INT + 50) // LAMBDA_DENOM)
+    assert ant.last_move == -1
+    assert int(state.pheromone[0, 4, 9]) == attenuated_origin + PHEROMONE_FAIL_BONUS_INT
+    assert int(state.pheromone[0, 10, 9]) == attenuated_target + PHEROMONE_FAIL_BONUS_INT
+
+
+def test_path_len_total_counts_no_move_but_not_teleport() -> None:
+    ant = Ant(14, 0, 2, 9, hp=10, level=0)
+    ant.record_move(-1)
+    assert ant.path_len_total == 1
+    assert ant.last_move == -1
+    assert ant.trail_cells == [(2, 9)]
+    ant.teleport_to(9, 9)
+    assert ant.path_len_total == 1
+    assert ant.last_move == -1
+    assert ant.trail_cells[-1] == (9, 9)
 
 
 def test_too_old_ants_remain_visible_until_next_lifecycle_cleanup() -> None:
