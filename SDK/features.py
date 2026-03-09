@@ -5,15 +5,17 @@ from dataclasses import dataclass
 import numpy as np
 
 from SDK.constants import (
+    AntBehavior,
     HIGHLAND_CELLS,
     MAP_PROPERTY,
     MAP_SIZE,
     MAX_ACTIONS,
     MAX_ROUND,
+    PHEROMONE_SCALE,
     PLAYER_BASES,
-    PHEROMONE_INIT,
     Terrain,
-    TowerType,
+    SuperWeaponType,
+    SUPER_WEAPON_STATS,
 )
 from SDK.engine import GameState
 from SDK.geometry import hex_distance
@@ -83,7 +85,7 @@ class FeatureExtractor:
 
     def encode_board(self, state: GameState, player: int) -> np.ndarray:
         enemy = 1 - player
-        board = np.zeros((14, MAP_SIZE, MAP_SIZE), dtype=np.float32)
+        board = np.zeros((28, MAP_SIZE, MAP_SIZE), dtype=np.float32)
         for x in range(MAP_SIZE):
             for y in range(MAP_SIZE):
                 terrain = MAP_PROPERTY[x][y]
@@ -95,6 +97,8 @@ class FeatureExtractor:
                     board[2, x, y] = 1.0 if player == 1 else 0.5
                 elif terrain == Terrain.BARRIER:
                     board[3, x, y] = 1.0
+                board[14, x, y] = state.pheromone[player, x, y] / float(12 * PHEROMONE_SCALE)
+                board[15, x, y] = state.pheromone[enemy, x, y] / float(12 * PHEROMONE_SCALE)
         for tower in state.towers:
             channel = 4 if tower.player == player else 5
             board[channel, tower.x, tower.y] = 1.0
@@ -107,6 +111,30 @@ class FeatureExtractor:
             board[channel, ant.x, ant.y] += ant.hp / max(ant.max_hp, 1)
             board[12, ant.x, ant.y] += ant.level / 2.0
             board[13, ant.x, ant.y] += ant.age / 32.0
+            if ant.frozen:
+                board[16, ant.x, ant.y] += 1.0
+            if ant.behavior == AntBehavior.RANDOM:
+                board[17, ant.x, ant.y] += 1.0
+            elif ant.behavior == AntBehavior.BEWITCHED:
+                board[18, ant.x, ant.y] += 1.0
+            elif ant.behavior == AntBehavior.CONTROL_FREE:
+                board[19, ant.x, ant.y] += 1.0
+        for effect in state.active_effects:
+            base_channel = {
+                SuperWeaponType.LIGHTNING_STORM: 20,
+                SuperWeaponType.EMP_BLASTER: 22,
+                SuperWeaponType.DEFLECTOR: 24,
+                SuperWeaponType.EMERGENCY_EVASION: 26,
+            }[effect.weapon_type]
+            channel = base_channel if effect.player == player else base_channel + 1
+            radius = SUPER_WEAPON_STATS[effect.weapon_type].attack_range
+            strength = effect.remaining_turns / max(SUPER_WEAPON_STATS[effect.weapon_type].duration, 1)
+            for x in range(MAP_SIZE):
+                for y in range(MAP_SIZE):
+                    if MAP_PROPERTY[x][y] == Terrain.VOID:
+                        continue
+                    if effect.in_range(x, y):
+                        board[channel, x, y] = max(board[channel, x, y], strength)
         return board
 
     def encode_stats(self, state: GameState, player: int) -> np.ndarray:
@@ -122,6 +150,12 @@ class FeatureExtractor:
                 state.weapon_cooldowns[player, 2] / 100.0,
                 state.weapon_cooldowns[player, 3] / 50.0,
                 state.weapon_cooldowns[player, 4] / 50.0,
+                state.weapon_cooldowns[enemy, 1] / 100.0,
+                state.weapon_cooldowns[enemy, 2] / 100.0,
+                state.weapon_cooldowns[enemy, 3] / 50.0,
+                state.weapon_cooldowns[enemy, 4] / 50.0,
+                state.super_weapon_usage[player] / 16.0,
+                state.super_weapon_usage[enemy] / 16.0,
             ],
             dtype=np.float32,
         )

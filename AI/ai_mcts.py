@@ -4,13 +4,6 @@ from dataclasses import dataclass, field
 import math
 
 try:
-    from ai_greedy import GreedyHeuristicFallbackAgent
-except ModuleNotFoundError as exc:
-    if exc.name != "ai_greedy":
-        raise
-    from AI.ai_greedy import GreedyHeuristicFallbackAgent
-
-try:
     from common import BaseAgent
 except ModuleNotFoundError as exc:
     if exc.name != "common":
@@ -40,12 +33,75 @@ class SearchNode:
         return self.value_sum / self.visits
 
 
+@dataclass(slots=True)
+class PhaseWeights:
+    hp: float
+    safety: float
+    tempo: float
+    offense: float
+    economy: float
+
+
+class HeuristicFallbackAgent(BaseAgent):
+    def _phase_weights(self, state: GameState, player: int) -> PhaseWeights:
+        hp_delta = state.bases[player].hp - state.bases[1 - player].hp
+        nearest_enemy = state.nearest_ant_distance(player)
+        safe_coin = state.coins[player] - state.safe_coin_threshold(player)
+        if nearest_enemy <= 4 or hp_delta < 0:
+            return PhaseWeights(hp=1.4, safety=1.5, tempo=0.5, offense=0.3, economy=0.4)
+        if hp_delta > 0 and state.frontline_distance(player) <= 8:
+            return PhaseWeights(hp=0.8, safety=0.4, tempo=1.0, offense=1.5, economy=0.8)
+        if safe_coin < 0:
+            return PhaseWeights(hp=1.0, safety=1.3, tempo=0.5, offense=0.2, economy=1.4)
+        return PhaseWeights(hp=1.1, safety=1.0, tempo=1.0, offense=0.9, economy=0.9)
+
+    def _predict_enemy_bundle(self, state: GameState, player: int) -> ActionBundle:
+        enemy_bundles = self.list_bundles(state, 1 - player)
+        return enemy_bundles[0] if enemy_bundles else self.list_bundles(state, player)[0]
+
+    def _score_bundle(
+        self,
+        state: GameState,
+        player: int,
+        bundle: ActionBundle,
+        enemy_bundle: ActionBundle,
+    ) -> float:
+        trial = state.clone()
+        if player == 0:
+            trial.resolve_turn(bundle.operations, enemy_bundle.operations)
+        else:
+            trial.resolve_turn(enemy_bundle.operations, bundle.operations)
+        summary = self.feature_extractor.summarize(trial, player).named
+        weights = self._phase_weights(state, player)
+        score = bundle.score
+        score += summary["hp_delta"] * 12.0 * weights.hp
+        score += summary["safe_coin"] * 0.03 * weights.economy
+        score += summary["frontline_advantage"] * 1.8 * weights.offense
+        score -= summary["enemy_progress"] * 0.7 * weights.safety
+        score += summary["my_progress"] * 0.5 * weights.offense
+        score += summary["generation_level"] * 4.0 * weights.tempo
+        score += summary["ant_level"] * 6.0 * weights.tempo
+        score += summary["kill_delta"] * 2.5 * weights.hp
+        score += summary["tower_spread"] * 0.8
+        if bundle.tags and bundle.tags[0] == "weapon" and state.coins[player] < state.safe_coin_threshold(player):
+            score -= 8.0
+        return score
+
+    def choose_bundle(self, state: GameState, player: int, bundles: list[ActionBundle] | None = None) -> ActionBundle:
+        bundles = bundles or self.list_bundles(state, player)
+        enemy_bundle = self._predict_enemy_bundle(state, player)
+        shortlist = bundles[: min(18, len(bundles))]
+        scored = [(self._score_bundle(state, player, bundle, enemy_bundle), bundle) for bundle in shortlist]
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return scored[0][1] if scored else bundles[0]
+
+
 class MCTSAgent(BaseAgent):
     def __init__(self, iterations: int = 64, max_depth: int = 4, seed: int | None = None) -> None:
         super().__init__(seed=seed)
         self.iterations = iterations
         self.max_depth = max_depth
-        self.opponent_model = GreedyHeuristicFallbackAgent(seed=seed)
+        self.opponent_model = HeuristicFallbackAgent(seed=seed)
 
     def _expand(self, node: SearchNode) -> None:
         if node.unexplored:

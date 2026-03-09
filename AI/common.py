@@ -18,8 +18,28 @@ class AgentContext:
     bundles: list[ActionBundle]
 
 
+class MatchSession(ABC):
+    @property
+    @abstractmethod
+    def player(self) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def perform_self_turn(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def receive_opponent_turn(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def sync_round(self) -> bool:
+        raise NotImplementedError
+
+
 class BaseAgent(ABC):
     def __init__(self, seed: int | None = None, max_actions: int = MAX_ACTIONS) -> None:
+        self._seed_override = seed
         self.rng = random.Random(seed)
         self.feature_extractor = FeatureExtractor(max_actions=max_actions)
         self.catalog = ActionCatalog(max_actions=max_actions, feature_extractor=self.feature_extractor)
@@ -28,7 +48,8 @@ class BaseAgent(ABC):
         return self.catalog.build(state, player)
 
     def on_match_start(self, player: int, seed: int) -> None:
-        del player, seed
+        if self._seed_override is None:
+            self.rng.seed((seed << 1) ^ player)
 
     def on_self_operations(self, operations) -> None:
         del operations

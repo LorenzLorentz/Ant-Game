@@ -20,13 +20,21 @@ def _to_python_operation(operation: native_antwar.Operation) -> Operation:
 
 def _build_shadow_state(native: native_antwar.NativeState) -> GameState:
     state = GameState.initial(seed=int(native.seed))
+    _sync_shadow_state(state, native)
+    return state
+
+
+def _sync_shadow_state(state: GameState, native: native_antwar.NativeState) -> None:
     state.round_index = int(native.round_index())
     state.coins = list(native.coins())
-    state.old_count = list(native.old_count())
+    native_old_count = list(native.old_count())
+    if any(native_old_count) or not any(state.old_count):
+        state.old_count = native_old_count
     state.die_count = list(native.die_count())
     state.super_weapon_usage = list(native.super_weapon_usage())
     state.ai_time = list(native.ai_time())
     state.weapon_cooldowns = np.asarray(native.weapon_cooldowns(), dtype=np.int16)
+
     state.towers = [
         Tower(
             tower_id=int(tower_id),
@@ -38,19 +46,32 @@ def _build_shadow_state(native: native_antwar.NativeState) -> GameState:
         )
         for tower_id, player, x, y, tower_type, cooldown in native.tower_rows()
     ]
-    state.ants = [
-        Ant(
-            ant_id=int(ant_id),
-            player=int(player),
-            x=int(x),
-            y=int(y),
-            hp=int(hp),
-            level=int(level),
-            age=int(age),
-            status=AntStatus(int(status)),
-        )
-        for ant_id, player, x, y, hp, level, age, status in native.ant_rows()
-    ]
+
+    ant_map = {ant.ant_id: ant for ant in state.ants}
+    synced_ants: list[Ant] = []
+    for ant_id, player, x, y, hp, level, age, status in native.ant_rows():
+        ant = ant_map.get(int(ant_id))
+        if ant is None:
+            ant = Ant(
+                ant_id=int(ant_id),
+                player=int(player),
+                x=int(x),
+                y=int(y),
+                hp=int(hp),
+                level=int(level),
+                age=int(age),
+                status=AntStatus(int(status)),
+            )
+        ant.player = int(player)
+        ant.x = int(x)
+        ant.y = int(y)
+        ant.hp = int(hp)
+        ant.level = int(level)
+        ant.age = int(age)
+        ant.status = AntStatus(int(status))
+        synced_ants.append(ant)
+    state.ants = synced_ants
+
     bases = [
         Base(
             player=int(player),
@@ -64,6 +85,7 @@ def _build_shadow_state(native: native_antwar.NativeState) -> GameState:
     ]
     bases.sort(key=lambda item: item.player)
     state.bases = bases
+
     state.active_effects = [
         WeaponEffect(
             weapon_type=SuperWeaponType(int(weapon_type)),
@@ -74,12 +96,12 @@ def _build_shadow_state(native: native_antwar.NativeState) -> GameState:
         )
         for weapon_type, player, x, y, remaining_turns in native.effect_rows()
     ]
+
     state.next_ant_id = int(native.next_ant_id())
     state.next_tower_id = int(native.next_tower_id())
     state.terminal = bool(native.terminal)
     winner = int(native.winner)
     state.winner = None if winner < 0 else winner
-    return state
 
 
 @dataclass(slots=True)
@@ -98,33 +120,50 @@ class NativeGameStateAdapter:
         return getattr(self._shadow, name)
 
     def _refresh_cache(self) -> None:
-        self._shadow = _build_shadow_state(self.native)
+        try:
+            shadow = object.__getattribute__(self, "_shadow")
+        except AttributeError:
+            shadow = None
+        if shadow is not None:
+            _sync_shadow_state(self._shadow, self.native)
+        else:
+            self._shadow = _build_shadow_state(self.native)
 
     def clone(self) -> NativeGameStateAdapter:
-        return NativeGameStateAdapter(self.native.clone())
+        clone = NativeGameStateAdapter(self.native.clone())
+        clone._shadow = self._shadow.clone()
+        clone._refresh_cache()
+        return clone
 
     def apply_operation_list(self, player: int, operations) -> list[Operation]:
-        illegal = self.native.apply_operation_list(player, [_to_native_operation(operation) for operation in operations])
+        operation_list = list(operations)
+        illegal = self.native.apply_operation_list(player, [_to_native_operation(operation) for operation in operation_list])
+        self._shadow.apply_operation_list(player, operation_list)
         self._refresh_cache()
         return [_to_python_operation(operation) for operation in illegal]
 
     def apply_operation(self, player: int, operation: Operation) -> None:
         self.native.apply_operation_list(player, [_to_native_operation(operation)])
+        self._shadow.apply_operation(player, operation)
         self._refresh_cache()
 
     def advance_round(self) -> None:
         self.native.advance_round()
+        self._shadow.advance_round()
         self._refresh_cache()
 
     def resolve_turn(self, operations0, operations1) -> TurnResolution:
+        operations0 = list(operations0)
+        operations1 = list(operations1)
         result = self.native.resolve_turn(
             [_to_native_operation(operation) for operation in operations0],
             [_to_native_operation(operation) for operation in operations1],
         )
+        self._shadow.resolve_turn(operations0, operations1)
         self._refresh_cache()
         winner = int(result["winner"])
         return TurnResolution(
-            (list(operations0), list(operations1)),
+            (operations0, operations1),
             (
                 [_to_python_operation(operation) for operation in result["illegal0"]],
                 [_to_python_operation(operation) for operation in result["illegal1"]],
@@ -144,4 +183,5 @@ class NativeGameStateAdapter:
             list(public_state.coins),
             list(public_state.camps_hp),
         )
+        self._shadow.sync_public_round_state(public_state)
         self._refresh_cache()

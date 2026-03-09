@@ -570,7 +570,9 @@ class GameState:
     def _crowding_penalty(self, ant: Ant, x: int, y: int) -> float:
         penalty = 0.0
         for other in self.ants:
-            if other.ant_id == ant.ant_id or other.player != ant.player or not other.is_alive():
+            if other.ant_id == ant.ant_id or other.player != ant.player:
+                continue
+            if other.status in (AntStatus.FAIL, AntStatus.TOO_OLD):
                 continue
             distance = hex_distance(x, y, other.x, other.y)
             if distance == 0:
@@ -650,7 +652,12 @@ class GameState:
     def _teleport_ants(self) -> None:
         if ANT_TELEPORT_INTERVAL <= 0 or (self.round_index + 1) % ANT_TELEPORT_INTERVAL != 0:
             return
-        eligible = [ant for ant in self.ants if ant.is_alive() and ant.behavior != AntBehavior.CONTROL_FREE]
+        eligible = [
+            ant
+            for ant in self.ants
+            if ant.status not in (AntStatus.FAIL, AntStatus.TOO_OLD)
+            and ant.behavior != AntBehavior.CONTROL_FREE
+        ]
         if not eligible:
             return
         teleport_count = max(1, int(round(len(eligible) * ANT_TELEPORT_RATIO)))
@@ -699,20 +706,20 @@ class GameState:
             else:
                 continue
             visited: set[tuple[int, int]] = set()
-            x, y = PLAYER_BASES[ant.player]
+            x, y = ant.x, ant.y
             if (x, y) not in visited:
                 self.pheromone[ant.player, x, y] = max(0, self.pheromone[ant.player, x, y] + delta)
                 visited.add((x, y))
-            enemy_base = PLAYER_BASES[1 - ant.player]
-            for direction in ant.path:
-                if direction == -1 or not 0 <= direction < len(OFFSET[y % 2]):
+            for direction in reversed(ant.path):
+                if direction == -1:
                     continue
-                dx, dy = OFFSET[y % 2][direction]
+                if not 0 <= direction < len(OFFSET[y % 2]):
+                    break
+                backtrack = (direction + 3) % 6
+                dx, dy = OFFSET[y % 2][backtrack]
                 next_x = x + dx
                 next_y = y + dy
                 if not is_valid_pos(next_x, next_y):
-                    break
-                if (next_x, next_y) != enemy_base and not is_path(next_x, next_y):
                     break
                 x = next_x
                 y = next_y
@@ -721,35 +728,33 @@ class GameState:
                 self.pheromone[ant.player, x, y] = max(0, self.pheromone[ant.player, x, y] + delta)
                 visited.add((x, y))
 
-    def _sanitize_ant_path(self, ant: Ant) -> None:
-        x, y = PLAYER_BASES[ant.player]
-        enemy_base = PLAYER_BASES[1 - ant.player]
-        for direction in ant.path:
-            if not 0 <= direction < len(OFFSET[y % 2]):
-                ant.path.clear()
-                return
-            dx, dy = OFFSET[y % 2][direction]
-            x += dx
-            y += dy
-            if not is_valid_pos(x, y):
-                ant.path.clear()
-                return
-            if (x, y) != enemy_base and not is_path(x, y):
-                ant.path.clear()
-                return
-        if (x, y) != (ant.x, ant.y):
-            ant.path.clear()
+    def _judge_base_camps(self) -> bool:
+        if self.bases[0].hp <= 0 and self.bases[1].hp <= 0:
+            self.terminal = True
+            self.winner = 0
+            return True
+        if self.bases[1].hp <= 0:
+            self.terminal = True
+            self.winner = 0
+            return True
+        if self.bases[0].hp <= 0:
+            self.terminal = True
+            self.winner = 1
+            return True
+        return False
 
     def _resolve_ant_lifecycle(self) -> None:
         remaining: list[Ant] = []
-        for ant in self.ants:
+        base_destroyed = False
+        for index, ant in enumerate(self.ants):
             ant.refresh_status()
             if ant.status == AntStatus.SUCCESS:
                 self.bases[1 - ant.player].hp -= 1
                 self.coins[ant.player] += 5
-                if self.bases[1 - ant.player].hp <= 0:
-                    self.terminal = True
-                    self.winner = ant.player
+                if self._judge_base_camps():
+                    remaining.extend(self.ants[index + 1 :])
+                    base_destroyed = True
+                    break
             elif ant.status == AntStatus.FAIL:
                 self.coins[1 - ant.player] += ant.kill_reward
                 self.die_count[ant.player] += 1
@@ -757,6 +762,15 @@ class GameState:
                 self.old_count[ant.player] += 1
             else:
                 remaining.append(ant)
+        if not base_destroyed:
+            survivors: list[Ant] = []
+            for ant in remaining:
+                ant.refresh_status()
+                if ant.status == AntStatus.TOO_OLD:
+                    self.old_count[ant.player] += 1
+                    continue
+                survivors.append(ant)
+            remaining = survivors
         self.ants = remaining
 
     def _draw_spawn_behavior(self) -> AntBehavior:
@@ -844,11 +858,7 @@ class GameState:
             self.terminal = True
             self._judge_timeout_winner()
         if not self.terminal:
-            for ant in self.ants:
-                ant.refresh_status()
-                if ant.status == AntStatus.TOO_OLD:
-                    self.old_count[ant.player] += 1
-            self.ants = [ant for ant in self.ants if ant.status != AntStatus.TOO_OLD]
+            self._judge_base_camps()
 
     def resolve_turn(self, operations0: Iterable[Operation], operations1: Iterable[Operation]) -> TurnResolution:
         illegal0 = self.apply_operation_list(0, operations0)
@@ -862,7 +872,7 @@ class GameState:
             for tower in sorted(self.towers, key=lambda item: item.tower_id)
         ]
         ants = [
-            (ant.ant_id, ant.player, ant.x, ant.y, ant.hp, ant.level, ant.age, int(ant.status))
+            (ant.ant_id, ant.player, ant.x, ant.y, ant.hp, ant.level, len(ant.path), int(ant.status))
             for ant in sorted(self.ants, key=lambda item: item.ant_id)
         ]
         return PublicRoundState(
@@ -890,22 +900,37 @@ class GameState:
         self.towers = synced_towers
         ant_map = {ant.ant_id: ant for ant in self.ants}
         synced_ants: list[Ant] = []
-        for ant_id, player, x, y, hp, level, age, status in public_state.ants:
-            ant = ant_map.get(ant_id, Ant(ant_id, player, x, y, hp, level, age=age, status=AntStatus(status)))
+        for ant_id, player, x, y, hp, level, public_path_length, status in public_state.ants:
+            ant = ant_map.get(ant_id, Ant(ant_id, player, x, y, hp, level, age=0, status=AntStatus(status)))
             ant.player = player
             ant.x = x
             ant.y = y
             ant.hp = hp
             ant.level = level
-            ant.age = age
             ant.status = AntStatus(status)
-            self._sanitize_ant_path(ant)
+            if ant.path and not all(direction == -1 or 0 <= direction < 6 for direction in ant.path):
+                ant.path = [direction for direction in ant.path if direction == -1 or 0 <= direction < 6]
+            if public_path_length < len(ant.path):
+                ant.path = ant.path[:public_path_length]
+            elif public_path_length > len(ant.path):
+                ant.path.extend([-1] * (public_path_length - len(ant.path)))
             synced_ants.append(ant)
         self.ants = synced_ants
         if self.towers:
             self.next_tower_id = max(tower.tower_id for tower in self.towers) + 1
+        else:
+            self.next_tower_id = 0
         if self.ants:
             self.next_ant_id = max(ant.ant_id for ant in self.ants) + 1
+        else:
+            self.next_ant_id = 0
+        self.terminal = False
+        self.winner = None
+        if self.round_index >= MAX_ROUND:
+            self.terminal = True
+            self._judge_timeout_winner()
+        elif self._judge_base_camps():
+            return
 
     def tower_spread_score(self, player: int) -> float:
         towers = self.towers_of(player)

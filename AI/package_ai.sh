@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "usage: $0 <random|greedy|mcts> [output_path_or_dir]" >&2
+  echo "usage: $0 <random|mcts|expert> [output_path_or_dir]" >&2
   exit 1
 fi
 
@@ -10,37 +10,56 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TARGET="$1"
 OUTPUT_ARG="${2:-}"
-SOURCE_AI=""
 ARCHIVE_NAME=""
-declare -a EXTRA_FILES=()
+declare -a FILE_MAPPINGS=()
+declare -a TREE_MAPPINGS=()
 
-copy_tree() {
-  local source="$1"
-  local target="$2"
-  mkdir -p "$target"
-  cp -R "$source/." "$target/"
-  find "$target" -name '__pycache__' -type d -prune -exec rm -rf {} +
-  find "$target" -name '*.pyc' -delete
-  find "$target" -name '.DS_Store' -delete
+clean_tree() {
+  local root="$1"
+  find "$root" -name '__pycache__' -type d -prune -exec rm -rf {} +
+  find "$root" -name '*.pyc' -delete
+  find "$root" -name '.DS_Store' -delete
+}
+
+copy_file_mapping() {
+  local output_dir="$1"
+  local mapping="$2"
+  local source="${mapping%%:*}"
+  local target="${mapping#*:}"
+  mkdir -p "$output_dir/$(dirname "$target")"
+  cp "$source" "$output_dir/$target"
+}
+
+copy_tree_mapping() {
+  local output_dir="$1"
+  local mapping="$2"
+  local source="${mapping%%:*}"
+  local target="${mapping#*:}"
+  mkdir -p "$output_dir/$target"
+  cp -R "$source/." "$output_dir/$target/"
+  clean_tree "$output_dir/$target"
 }
 
 assemble_layout() {
   local output_dir="$1"
 
   mkdir -p "$output_dir"
-  cp "${REPO_ROOT}/AI/main.py" "$output_dir/main.py"
-  cp "${REPO_ROOT}/AI/protocol.py" "$output_dir/protocol.py"
-  cp "${REPO_ROOT}/AI/common.py" "$output_dir/common.py"
-  cp "$SOURCE_AI" "$output_dir/ai.py"
+  copy_file_mapping "$output_dir" "${REPO_ROOT}/AI/main.py:main.py"
+  copy_file_mapping "$output_dir" "${REPO_ROOT}/AI/common.py:common.py"
+  copy_file_mapping "$output_dir" "${REPO_ROOT}/AI/protocol.py:protocol.py"
+  copy_tree_mapping "$output_dir" "${REPO_ROOT}/SDK:SDK"
+  copy_tree_mapping "$output_dir" "${REPO_ROOT}/tools:tools"
 
-  if [[ ${#EXTRA_FILES[@]} -gt 0 ]]; then
-    for extra in "${EXTRA_FILES[@]}"; do
-      cp "$extra" "$output_dir/$(basename "$extra")"
+  if ((${#FILE_MAPPINGS[@]})); then
+    for mapping in "${FILE_MAPPINGS[@]}"; do
+      copy_file_mapping "$output_dir" "$mapping"
     done
   fi
-
-  copy_tree "${REPO_ROOT}/SDK" "${output_dir}/SDK"
-  copy_tree "${REPO_ROOT}/tools" "${output_dir}/tools"
+  if ((${#TREE_MAPPINGS[@]})); then
+    for mapping in "${TREE_MAPPINGS[@]}"; do
+      copy_tree_mapping "$output_dir" "$mapping"
+    done
+  fi
 }
 
 require_empty_dir() {
@@ -60,19 +79,20 @@ require_empty_dir() {
 
 case "$TARGET" in
   random)
-    SOURCE_AI="${REPO_ROOT}/AI/ai_random.py"
     ARCHIVE_NAME="ai_rand.zip"
-    EXTRA_FILES=()
-    ;;
-  greedy)
-    SOURCE_AI="${REPO_ROOT}/AI/ai_greedy.py"
-    ARCHIVE_NAME="ai_greedy.zip"
-    EXTRA_FILES=("${REPO_ROOT}/AI/greedy_runtime.py")
+    FILE_MAPPINGS=("${REPO_ROOT}/AI/ai_random.py:ai.py")
     ;;
   mcts)
-    SOURCE_AI="${REPO_ROOT}/AI/ai_mcts.py"
     ARCHIVE_NAME="ai_mcts.zip"
-    EXTRA_FILES=("${REPO_ROOT}/AI/ai_greedy.py" "${REPO_ROOT}/AI/greedy_runtime.py")
+    FILE_MAPPINGS=("${REPO_ROOT}/AI/ai_mcts.py:ai.py")
+    ;;
+  expert)
+    ARCHIVE_NAME="ai_expert.zip"
+    FILE_MAPPINGS=(
+      "${REPO_ROOT}/AI/AI_expert/ai.py:ai.py"
+      "${REPO_ROOT}/AI/AI_expert/runtime.py:runtime.py"
+    )
+    TREE_MAPPINGS=("${REPO_ROOT}/AI/AI_expert/antwar:antwar")
     ;;
   *)
     echo "unknown target: ${TARGET}" >&2

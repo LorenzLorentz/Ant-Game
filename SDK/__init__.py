@@ -1,6 +1,7 @@
 from SDK.actions import ActionBundle, ActionCatalog
 from SDK.engine import GameState
 from SDK.features import FeatureExtractor
+from SDK.runtime import MatchRuntime
 
 __all__ = [
     "ActionBundle",
@@ -8,6 +9,7 @@ __all__ = [
     "AntWarParallelEnv",
     "FeatureExtractor",
     "GameState",
+    "MatchRuntime",
     "env",
 ]
 

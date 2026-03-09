@@ -361,19 +361,32 @@ struct NativeState {
             const int y = row[3];
             const int hp = row[4];
             const int level = row[5];
-            const int age = row[6];
+            const int public_path_len = row[6];
             game.ants.emplace_back(player, ant_id, x, y, level);
             auto &ant = game.ants.back();
             auto it = previous_ants.find(ant_id);
-            if (it != previous_ants.end())
+            if (it != previous_ants.end()) {
                 ant.path = it->second.path;
+                ant.age = it->second.age;
+                ant.shield = it->second.shield;
+                ant.defend = it->second.defend;
+                ant.evasion = it->second.evasion;
+            } else {
+                ant.path.assign(std::max(public_path_len, 0), -1);
+                ant.age = 0;
+                ant.shield = 0;
+                ant.defend = false;
+                ant.evasion = false;
+            }
+            if (public_path_len >= 0) {
+                if (static_cast<int>(ant.path.size()) > public_path_len)
+                    ant.path.resize(public_path_len);
+                else if (static_cast<int>(ant.path.size()) < public_path_len)
+                    ant.path.insert(ant.path.end(), public_path_len - static_cast<int>(ant.path.size()), -1);
+            }
             ant.pos_x = x;
             ant.pos_y = y;
             ant.hp = hp;
-            ant.age = age;
-            ant.shield = 0;
-            ant.defend = false;
-            ant.evasion = false;
             ant.is_frozen = (row[7] == static_cast<int>(Ant::Status::Frozen));
             ant.all_frozen = ant.is_frozen;
             if (it != previous_ants.end()) {

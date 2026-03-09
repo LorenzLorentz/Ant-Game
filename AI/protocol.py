@@ -6,36 +6,42 @@ from dataclasses import dataclass
 from typing import Iterable
 
 try:
-    from common import BaseAgent
+    from common import BaseAgent, MatchSession
 except ModuleNotFoundError as exc:
     if exc.name != "common":
         raise
-    from AI.common import BaseAgent
+    from AI.common import BaseAgent, MatchSession
 
-from SDK.backend import load_backend
-from SDK.engine import GameState, PublicRoundState
+from SDK.engine import PublicRoundState
+from SDK.runtime import MatchRuntime
 from SDK.model import Operation
 from SDK.constants import OperationType
 
 
 @dataclass(slots=True)
 class ProtocolController:
-    player: int
-    state: GameState
+    runtime: MatchRuntime
     agent: BaseAgent
+
+    @property
+    def player(self) -> int:
+        return self.runtime.player
+
+    @property
+    def state(self):
+        return self.runtime.state
 
     def decide(self) -> list[Operation]:
         return self.agent.choose_operations(self.state, self.player)
 
     def apply_self_operations(self, operations: Iterable[Operation]) -> list[Operation]:
-        return self.state.apply_operation_list(self.player, operations)
+        return self.runtime.apply_self_operations(operations)
 
     def apply_opponent_operations(self, operations: Iterable[Operation]) -> list[Operation]:
-        return self.state.apply_operation_list(1 - self.player, operations)
+        return self.runtime.apply_opponent_operations(operations)
 
     def finish_round(self, public_round_state: PublicRoundState) -> None:
-        self.state.advance_round()
-        self.state.sync_public_round_state(public_round_state)
+        self.runtime.finish_round(public_round_state)
 
 
 class ProtocolIO:
@@ -113,42 +119,50 @@ class ProtocolIO:
         self.send_packet("\n".join(lines) + "\n")
 
 
-def run_agent(agent: BaseAgent, io: ProtocolIO | None = None) -> None:
-    io = io or ProtocolIO()
-    player, seed = io.recv_init()
-    controller = ProtocolController(player=player, state=load_backend(prefer_native=False).initial_state(seed=seed), agent=agent)
-    agent.on_match_start(player, seed)
+class ProtocolSession(MatchSession):
+    def __init__(self, agent: BaseAgent, io: ProtocolIO | None = None) -> None:
+        self.io = io or ProtocolIO()
+        player, seed = self.io.recv_init()
+        self.controller = ProtocolController(
+            runtime=MatchRuntime.create(player=player, seed=seed, prefer_native=False),
+            agent=agent,
+        )
+        agent.on_match_start(player, seed)
 
-    while True:
-        if player == 0:
-            my_ops = controller.decide()
-            controller.apply_self_operations(my_ops)
-            agent.on_self_operations(my_ops)
-            io.send_operations(my_ops)
-            try:
-                opponent_ops = io.recv_operations()
-            except Exception:
-                break
-            controller.apply_opponent_operations(opponent_ops)
-            agent.on_opponent_operations(opponent_ops)
-            round_state = io.recv_round_state()
-            if round_state is None:
-                break
-            controller.finish_round(round_state)
-            agent.on_round_state(round_state)
-        else:
-            try:
-                opponent_ops = io.recv_operations()
-            except Exception:
-                break
-            controller.apply_opponent_operations(opponent_ops)
-            agent.on_opponent_operations(opponent_ops)
-            my_ops = controller.decide()
-            controller.apply_self_operations(my_ops)
-            agent.on_self_operations(my_ops)
-            io.send_operations(my_ops)
-            round_state = io.recv_round_state()
-            if round_state is None:
-                break
-            controller.finish_round(round_state)
-            agent.on_round_state(round_state)
+    @property
+    def player(self) -> int:
+        return self.controller.player
+
+    def perform_self_turn(self) -> None:
+        my_ops = self.controller.decide()
+        self.controller.apply_self_operations(my_ops)
+        self.controller.agent.on_self_operations(my_ops)
+        self.io.send_operations(my_ops)
+
+    def receive_opponent_turn(self) -> bool:
+        try:
+            opponent_ops = self.io.recv_operations()
+        except Exception:
+            return False
+        self.controller.apply_opponent_operations(opponent_ops)
+        self.controller.agent.on_opponent_operations(opponent_ops)
+        return True
+
+    def sync_round(self) -> bool:
+        round_state = self.io.recv_round_state()
+        if round_state is None:
+            return False
+        self.controller.finish_round(round_state)
+        self.controller.agent.on_round_state(round_state)
+        return True
+
+
+def run_agent(agent: BaseAgent, io: ProtocolIO | None = None) -> None:
+    try:
+        from main import run_session
+    except ModuleNotFoundError as exc:  # pragma: no cover - repository layout
+        if exc.name != "main":
+            raise
+        from AI.main import run_session
+
+    run_session(ProtocolSession(agent, io=io))

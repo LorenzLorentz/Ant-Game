@@ -25,6 +25,15 @@ def test_base_trainer_can_be_subclassed() -> None:
     assert history[0]["count"] > 0
 
 
+def test_environment_observation_exposes_runtime_rule_channels() -> None:
+    env = AntWarParallelEnv(seed=2)
+    observations, _ = env.reset(seed=2)
+    board = observations["player_0"]["board"]
+    assert board.shape[0] >= 28
+    assert np.any(board[14] > 0)
+    env.close()
+
+
 def test_linear_selfplay_trainer_runs_one_batch() -> None:
     trainer = LinearSelfPlayTrainer(
         lambda seed=0: AntWarParallelEnv(seed=seed),
