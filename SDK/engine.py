@@ -25,19 +25,9 @@ from SDK.constants import (
     MAX_ROUND,
     OFFSET,
     OperationType,
-<<<<<<< HEAD
     PATH_CELLS,
-    PHEROMONE_ATTENUATION,
-    PHEROMONE_FAIL_BONUS,
-||||||| cc6caec
-    PHEROMONE_ATTENUATION,
-    PHEROMONE_FAIL_BONUS,
-=======
     PHEROMONE_FAIL_BONUS_INT,
->>>>>>> refs/remotes/github/main
-    PHEROMONE_FLOOR,
     PHEROMONE_INIT_INT,
-    PHEROMONE_SCALE,
     PHEROMONE_SUCCESS_BONUS_INT,
     PHEROMONE_TOO_OLD_BONUS_INT,
     TAU_BASE_ADD_INT,
@@ -636,39 +626,16 @@ class GameState:
             return self._sample_move_from_scores(candidates, scores, BEWITCH_MOVE_TEMPERATURE)
 
         current_distance = hex_distance(ant.x, ant.y, target_x, target_y)
-<<<<<<< HEAD
         weighted_scores: list[float] = []
         raw_scores: list[float] = []
         for _, nx, ny in candidates:
             pheromone = float(self.pheromone[ant.player, nx, ny])
-||||||| cc6caec
-        best_direction = -1
-        best_weight = -1.0
-        best_raw = -1.0
-        for direction, nx, ny in neighbors(ant.x, ant.y):
-            if ant.path and ant.path[-1] == (direction + 3) % 6:
-                continue
-            if not is_path(nx, ny):
-                continue
-            pheromone = float(self.pheromone[ant.player, nx, ny])
-=======
-        best_direction = -1
-        best_weighted = -1
-        best_raw = -1
-        for direction, nx, ny in neighbors(ant.x, ant.y):
-            if ant.path and ant.path[-1] == (direction + 3) % 6:
-                continue
-            if not is_path(nx, ny):
-                continue
-            pheromone_raw = int(self.pheromone[ant.player, nx, ny])
->>>>>>> refs/remotes/github/main
             next_distance = hex_distance(nx, ny, target_x, target_y)
             if next_distance < current_distance:
-                eta_scaled = 12500  # 1.25
+                weight = 1.25
             elif next_distance == current_distance:
-                eta_scaled = 10000  # 1.0
+                weight = 1.0
             else:
-<<<<<<< HEAD
                 weight = 0.75
             crowd = self._crowding_penalty(ant, nx, ny)
             raw = pheromone * weight
@@ -699,23 +666,6 @@ class GameState:
             ant.x = target_x
             ant.y = target_y
             ant.refresh_status()
-||||||| cc6caec
-                weight = 0.75
-            weighted = pheromone * weight
-            if weighted > best_weight or (weighted == best_weight and pheromone > best_raw):
-                best_direction = direction
-                best_weight = weighted
-                best_raw = pheromone
-        return best_direction
-=======
-                eta_scaled = 7500   # 0.75
-            weighted = pheromone_raw * eta_scaled // PHEROMONE_SCALE
-            if weighted > best_weighted or (weighted == best_weighted and pheromone_raw > best_raw):
-                best_direction = direction
-                best_weighted = weighted
-                best_raw = pheromone_raw
-        return best_direction
->>>>>>> refs/remotes/github/main
 
     def _move_ants(self) -> None:
         for ant in self.ants:
