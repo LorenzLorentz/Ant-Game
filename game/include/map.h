@@ -17,9 +17,12 @@
 #define PLAYER_1_BASE_CAMP_Y (SIDE_LENGTH - 1)
 #define BLOCK_NUM (MAP_SIZE * (SIDE_LENGTH - 1) - SIDE_LENGTH)
 
-const double LAMBDA = 0.97;
-const double TAU_MIN = 0.0;
-const double TAU_BASE = 10.0;
+// Pheromone scale: stored as int, real_value = pheromone_int / PHEROMONE_SCALE
+constexpr int PHEROMONE_SCALE = 10000;
+constexpr int LAMBDA_NUM = 97;   // 0.97 * 100
+constexpr int LAMBDA_DENOM = 100;
+constexpr int TAU_MIN_INT = 0;
+constexpr int TAU_BASE_INT = 100000;  // 10.0 * PHEROMONE_SCALE
 
 int distance(Pos a, Pos b);
 // unsigned long long lcg();
@@ -44,7 +47,7 @@ struct point {
     // 
     DefenseTower *tower = nullptr;
     Headquarter *base_camp = nullptr;
-    double pheromone[2];
+    int pheromone[2];  // scaled by PHEROMONE_SCALE (10.0 -> 100000)
 };
 
 
@@ -67,21 +70,16 @@ class Map {
     void update_pheromone(Ant *ant);
     
     using Pheromone =
-        multi_dim_array_t<double, 2, MAP_SIZE, MAP_SIZE>; // A multi-dim array
+        multi_dim_array_t<double, 2, MAP_SIZE, MAP_SIZE>; // For JSON output
     Pheromone get_pheromone() {
         Pheromone p;
         for (int i = 0; i < MAP_SIZE; i++)
-            for (int j = 0; j < MAP_SIZE; j++)
-            {
-                p[0][i][j] =
-                    (double)round(map[i][j].pheromone[0] * 10000.0) /
-                    10000.0;
-                p[1][i][j] =
-                    (double)round(map[i][j].pheromone[1] * 10000.0) /
-                    10000.0;
+            for (int j = 0; j < MAP_SIZE; j++) {
+                p[0][i][j] = (double)map[i][j].pheromone[0] / PHEROMONE_SCALE;
+                p[1][i][j] = (double)map[i][j].pheromone[1] / PHEROMONE_SCALE;
             }
         return p;
-    };
+    }
     void next_round();
     bool is_empty(int x, int y, int player) const;
 };

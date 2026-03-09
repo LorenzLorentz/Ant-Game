@@ -140,6 +140,8 @@ void Map::init_pheromon(unsigned long long M){
     lcg_seed = M;
     for(int i = 0; i < 2; i++)
         for(int j = 0; j < MAP_SIZE; j++)
-            for(int k = 0; k < MAP_SIZE; k++)
-                map[j][k].pheromone[i] = lcg() * pow(2, -46) + 8;
+            for(int k = 0; k < MAP_SIZE; k++) {
+                unsigned long long v = lcg();
+                map[j][k].pheromone[i] = 80000 + (int)((v * 10000ULL) >> 46);
+            }
 }

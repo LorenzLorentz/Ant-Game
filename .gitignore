@@ -31,3 +31,5 @@ replays/
 _main.py
 __main.py
 *.zip
+
+src/*.o

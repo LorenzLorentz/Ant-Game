@@ -19,17 +19,28 @@ from SDK.constants import (
     DEFAULT_MOVE_TEMPERATURE,
     HIGHLAND_CELLS,
     INITIAL_COINS,
+    LAMBDA_DENOM,
+    LAMBDA_NUM,
     MAP_SIZE,
     MAX_ROUND,
     OFFSET,
     OperationType,
+<<<<<<< HEAD
     PATH_CELLS,
     PHEROMONE_ATTENUATION,
     PHEROMONE_FAIL_BONUS,
+||||||| cc6caec
+    PHEROMONE_ATTENUATION,
+    PHEROMONE_FAIL_BONUS,
+=======
+    PHEROMONE_FAIL_BONUS_INT,
+>>>>>>> refs/remotes/github/main
     PHEROMONE_FLOOR,
-    PHEROMONE_INIT,
-    PHEROMONE_SUCCESS_BONUS,
-    PHEROMONE_TOO_OLD_BONUS,
+    PHEROMONE_INIT_INT,
+    PHEROMONE_SCALE,
+    PHEROMONE_SUCCESS_BONUS_INT,
+    PHEROMONE_TOO_OLD_BONUS_INT,
+    TAU_BASE_ADD_INT,
     PLAYER_BASES,
     PLAYER_COUNT,
     RANDOM_ANT_DECAY_TURNS,
@@ -107,7 +118,7 @@ class GameState:
     ants: list[Ant] = field(default_factory=list)
     bases: list[Base] = field(default_factory=list)
     coins: list[int] = field(default_factory=lambda: [INITIAL_COINS, INITIAL_COINS])
-    pheromone: np.ndarray = field(default_factory=lambda: np.zeros((PLAYER_COUNT, MAP_SIZE, MAP_SIZE), dtype=np.float32))
+    pheromone: np.ndarray = field(default_factory=lambda: np.zeros((PLAYER_COUNT, MAP_SIZE, MAP_SIZE), dtype=np.int32))
     weapon_cooldowns: np.ndarray = field(default_factory=lambda: np.zeros((PLAYER_COUNT, 5), dtype=np.int16))
     active_effects: list[WeaponEffect] = field(default_factory=list)
     old_count: list[int] = field(default_factory=lambda: [0, 0])
@@ -156,7 +167,7 @@ class GameState:
             for x in range(MAP_SIZE):
                 for y in range(MAP_SIZE):
                     value = (25214903917 * value) & ((1 << 48) - 1)
-                    self.pheromone[player, x, y] = np.float32(value * (2 ** -46) + 8.0)
+                    self.pheromone[player, x, y] = PHEROMONE_INIT_INT + (value * 10000 >> 46)
 
     def _next_random(self) -> int:
         self.rng_state = (RNG_MULTIPLIER * self.rng_state + RNG_INCREMENT) & RNG_MASK
@@ -625,16 +636,39 @@ class GameState:
             return self._sample_move_from_scores(candidates, scores, BEWITCH_MOVE_TEMPERATURE)
 
         current_distance = hex_distance(ant.x, ant.y, target_x, target_y)
+<<<<<<< HEAD
         weighted_scores: list[float] = []
         raw_scores: list[float] = []
         for _, nx, ny in candidates:
             pheromone = float(self.pheromone[ant.player, nx, ny])
+||||||| cc6caec
+        best_direction = -1
+        best_weight = -1.0
+        best_raw = -1.0
+        for direction, nx, ny in neighbors(ant.x, ant.y):
+            if ant.path and ant.path[-1] == (direction + 3) % 6:
+                continue
+            if not is_path(nx, ny):
+                continue
+            pheromone = float(self.pheromone[ant.player, nx, ny])
+=======
+        best_direction = -1
+        best_weighted = -1
+        best_raw = -1
+        for direction, nx, ny in neighbors(ant.x, ant.y):
+            if ant.path and ant.path[-1] == (direction + 3) % 6:
+                continue
+            if not is_path(nx, ny):
+                continue
+            pheromone_raw = int(self.pheromone[ant.player, nx, ny])
+>>>>>>> refs/remotes/github/main
             next_distance = hex_distance(nx, ny, target_x, target_y)
             if next_distance < current_distance:
-                weight = 1.25
+                eta_scaled = 12500  # 1.25
             elif next_distance == current_distance:
-                weight = 1.0
+                eta_scaled = 10000  # 1.0
             else:
+<<<<<<< HEAD
                 weight = 0.75
             crowd = self._crowding_penalty(ant, nx, ny)
             raw = pheromone * weight
@@ -665,6 +699,23 @@ class GameState:
             ant.x = target_x
             ant.y = target_y
             ant.refresh_status()
+||||||| cc6caec
+                weight = 0.75
+            weighted = pheromone * weight
+            if weighted > best_weight or (weighted == best_weight and pheromone > best_raw):
+                best_direction = direction
+                best_weight = weighted
+                best_raw = pheromone
+        return best_direction
+=======
+                eta_scaled = 7500   # 0.75
+            weighted = pheromone_raw * eta_scaled // PHEROMONE_SCALE
+            if weighted > best_weighted or (weighted == best_weighted and pheromone_raw > best_raw):
+                best_direction = direction
+                best_weighted = weighted
+                best_raw = pheromone_raw
+        return best_direction
+>>>>>>> refs/remotes/github/main
 
     def _move_ants(self) -> None:
         for ant in self.ants:
@@ -681,22 +732,26 @@ class GameState:
         self._teleport_ants()
 
     def _update_pheromone(self) -> None:
-        self.pheromone = self.pheromone * PHEROMONE_ATTENUATION + (1.0 - PHEROMONE_ATTENUATION) * PHEROMONE_INIT
+        # Global attenuation: p_new = 0.97*p + 0.03*10 (integer arithmetic)
+        self.pheromone = np.maximum(
+            0,
+            (LAMBDA_NUM * self.pheromone + TAU_BASE_ADD_INT + 50) // LAMBDA_DENOM,
+        )
         for ant in self.ants:
             if ant.status in (AntStatus.ALIVE, AntStatus.FROZEN):
                 continue
             if ant.status == AntStatus.SUCCESS:
-                delta = PHEROMONE_SUCCESS_BONUS
+                delta = PHEROMONE_SUCCESS_BONUS_INT
             elif ant.status == AntStatus.FAIL:
-                delta = PHEROMONE_FAIL_BONUS
+                delta = PHEROMONE_FAIL_BONUS_INT
             elif ant.status == AntStatus.TOO_OLD:
-                delta = PHEROMONE_TOO_OLD_BONUS
+                delta = PHEROMONE_TOO_OLD_BONUS_INT
             else:
                 continue
             visited: set[tuple[int, int]] = set()
             x, y = PLAYER_BASES[ant.player]
             if (x, y) not in visited:
-                self.pheromone[ant.player, x, y] = max(PHEROMONE_FLOOR, self.pheromone[ant.player, x, y] + delta)
+                self.pheromone[ant.player, x, y] = max(0, self.pheromone[ant.player, x, y] + delta)
                 visited.add((x, y))
             enemy_base = PLAYER_BASES[1 - ant.player]
             for direction in ant.path:
@@ -713,7 +768,7 @@ class GameState:
                 y = next_y
                 if (x, y) in visited:
                     continue
-                self.pheromone[ant.player, x, y] = max(PHEROMONE_FLOOR, self.pheromone[ant.player, x, y] + delta)
+                self.pheromone[ant.player, x, y] = max(0, self.pheromone[ant.player, x, y] + delta)
                 visited.add((x, y))
 
     def _sanitize_ant_path(self, ant: Ant) -> None:

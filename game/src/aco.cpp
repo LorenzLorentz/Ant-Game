@@ -7,26 +7,23 @@
 #include <time.h>
 #include <vector>
 
-// move
-const double Q0 = 0;
-// arrive
-const double Q1 = 10;
-// hp < 0 
-const double Q2 = -5;
-// too old
-const double Q3 = -3;
+// Pheromone deltas (scaled by PHEROMONE_SCALE)
+const int Q1_INT = 100000;   // +10
+const int Q2_INT = -50000;   // -5
+const int Q3_INT = -30000;   // -3
 
 // y 为奇偶时方向不同
 const int d[2][6][2] = {{{0, 1}, {-1, 0}, {0, -1}, {1, -1}, {1, 0}, {1, 1}},
                         {{-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, 0}, {0, 1}}};
 
-double eta(int _x, int _y, int x, int y, Pos des) {
+// Eta weight scaled by 10000 for integer arithmetic
+int eta_scaled(int _x, int _y, int x, int y, Pos des) {
     if (distance(Pos(_x, _y), des) < distance(Pos(x, y), des)) {
-        return 1.25;
+        return 12500;   // 1.25
     } else if (distance(Pos(_x, _y), des) == distance(Pos(x, y), des)) {
-        return 1.0;
+        return 10000;   // 1.0
     } else {
-        return 0.75;
+        return 7500;    // 0.75
     }
 }
 
@@ -55,32 +52,21 @@ void Map::update_pheromone(Ant *ant) {
     int y = ant->get_y();
     // 如果到达大本营, 更新全局信息素
     // 如果hp <= 0 或已经走了很长距离, 判定死亡,更新全局信息素并返回
-    double Q = 0.0;
+    int Q = 0;
     if (ant->get_status() == Ant::Status::Success) {
-            Q = Q1;
+        Q = Q1_INT;
     } else if (ant->get_status() == Ant::Status::Fail) {
-            Q = Q2;
-    } else if (ant->get_status() == Ant::Status::TooOld){
-            Q = Q3;
+        Q = Q2_INT;
+    } else if (ant->get_status() == Ant::Status::TooOld) {
+        Q = Q3_INT;
     } else {
         return;
     }
 
-
     auto iter = ant->path.end() - 1;
-    // if (ant->get_status() == Ant::Status::TooOld) {
-    //     int mov = *iter;
-    //     if (mov != -1) {
-    //         x += d[y % 2][(mov + 3) % 6][0];
-    //         y += d[y % 2][(mov + 3) % 6][1];
-    //     }
-    //     iter--;
-    // }
-
     std::vector<std::pair<int, int>> visited_p = {std::make_pair(x, y)};
-    map[x][y].pheromone[player] = std::max(0.0, map[x][y].pheromone[player] + (double)Q);
-    for (; iter >= ant->path.begin();
-            iter--) {
+    map[x][y].pheromone[player] = std::max(TAU_MIN_INT, map[x][y].pheromone[player] + Q);
+    for (; iter >= ant->path.begin(); iter--) {
         int mov = *iter;
         if (mov == -1)
             continue;
@@ -88,37 +74,35 @@ void Map::update_pheromone(Ant *ant) {
         y += d[y % 2][(mov + 3) % 6][1];
         if (std::find(visited_p.begin(), visited_p.end(), std::make_pair(x, y)) != visited_p.end())
             continue;
-        map[x][y].pheromone[player] = std::max(0.0, map[x][y].pheromone[player] + (double)Q);
-        visited_p.push_back(std::make_pair(x, y));        
+        map[x][y].pheromone[player] = std::max(TAU_MIN_INT, map[x][y].pheromone[player] + Q);
+        visited_p.push_back(std::make_pair(x, y));
     }
 }
 
 // get the next step of ant
 int Map::get_move(Ant *ant, Pos des) {
-    // 保证蚂蚁健康，可以移动
     int x = ant->get_x();
     int y = ant->get_y();
     int player = ant->get_player();
 
-    double p[6];
+    long long weighted[6];
     for (int i = 0; i < 6; i++) {
         int _x = x + d[y % 2][i][0];
         int _y = y + d[y % 2][i][1];
         if (!ant->path.empty() && ant->path.back() == ((i + 3) % 6)) {
-            p[i] = -1.0; // 不能走回头路,设为-1
+            weighted[i] = -1;
         } else if (!is_valid(_x, _y)) {
-            p[i] = -1.0; // 判断此边是否可走
+            weighted[i] = -1;
         } else {
-            p[i] = map[_x][_y].pheromone[player];
+            int eta = eta_scaled(_x, _y, x, y, des);
+            weighted[i] = (long long)map[_x][_y].pheromone[player] * eta / PHEROMONE_SCALE;
         }
-        double m = eta(_x, _y, x, y, des);
-        p[i] *= m;
     }
     int mov = -1;
-    double max_p = - 0.1;
+    long long max_p = -1;
     for (int i = 0; i < 6; i++) {
-        if (p[i] > max_p) {
-            max_p = p[i];
+        if (weighted[i] > max_p) {
+            max_p = weighted[i];
             mov = i;
         }
     }
@@ -126,13 +110,14 @@ int Map::get_move(Ant *ant, Pos des) {
 }
 
 
-// global reduction
+// global attenuation: p_new = 0.97*p + 0.03*10
 void Map::next_round() {
     for (int i = 0; i < MAP_SIZE; i++)
         for (int j = 0; j < MAP_SIZE; j++)
             for (int k = 0; k < 2; k++) {
-                    map[i][j].pheromone[k] = LAMBDA * map[i][j].pheromone[k] + (1.0 - LAMBDA) * TAU_BASE;
-                }
-
+                int p = map[i][j].pheromone[k];
+                map[i][j].pheromone[k] = std::max(TAU_MIN_INT,
+                    (LAMBDA_NUM * p + 3000 + 50) / LAMBDA_DENOM);
+            }
 }
 

@@ -95,9 +95,15 @@ LEVEL3_TOWER_UPGRADE_PRICE = 200
 TOWER_DOWNGRADE_REFUND_RATIO = 0.8
 LEVEL2_BASE_UPGRADE_PRICE = 200
 LEVEL3_BASE_UPGRADE_PRICE = 250
+# Pheromone: stored as int, real_value = pheromone_int / PHEROMONE_SCALE
+PHEROMONE_SCALE = 10000
 PHEROMONE_INIT = 10.0
-PHEROMONE_MIN = 0.0
+PHEROMONE_INIT_INT = 80000
+PHEROMONE_MIN = 0
 PHEROMONE_ATTENUATING_RATIO = 0.97
+LAMBDA_NUM = 97
+LAMBDA_DENOM = 100
+TAU_BASE_ADD_INT = 3000
 
 TOWER_INFO = {
     TowerType.BASIC: (5, 2.0, 2),
@@ -127,12 +133,12 @@ GENERATION_CYCLE = (4, 2, 1)
 ANT_MAX_HP = (10, 25, 50)
 ANT_REWARD = (3, 5, 7)
 ANT_AGE_LIMIT = 32
-PHEROMONE_BONUS = {
-    AntState.SUCCESS: 10.0,
-    AntState.FAIL: -5.0,
-    AntState.TOO_OLD: -3.0,
+PHEROMONE_BONUS_INT = {
+    AntState.SUCCESS: 100000,
+    AntState.FAIL: -50000,
+    AntState.TOO_OLD: -30000,
 }
-ETA = (1.25, 1.0, 0.75)
+ETA_SCALED = (12500, 10000, 7500)  # 1.25, 1.0, 0.75
 ETA_OFFSET = 1
 
 
@@ -446,8 +452,8 @@ class GameInfo:
     ants: list[Ant] = field(default_factory=list)
     bases: list[Base] = field(default_factory=lambda: [Base(0), Base(1)])
     coins: list[int] = field(default_factory=lambda: [COIN_INIT, COIN_INIT])
-    pheromone: list[list[list[float]]] = field(
-        default_factory=lambda: [[[PHEROMONE_INIT for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)] for _ in range(2)]
+    pheromone: list[list[list[int]]] = field(
+        default_factory=lambda: [[[PHEROMONE_INIT_INT for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)] for _ in range(2)]
     )
     building_tag: list[list[BuildingType]] = field(
         default_factory=lambda: [[BuildingType.EMPTY for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
@@ -468,7 +474,7 @@ class GameInfo:
         rng = RandomSource(seed)
         self.pheromone = [
             [
-                [float(rng.get() * (2 ** -46) + 8.0) for _ in range(MAP_SIZE)]
+                [PHEROMONE_INIT_INT + (rng.get() * 10000 >> 46) for _ in range(MAP_SIZE)]
                 for _ in range(MAP_SIZE)
             ]
             for _ in range(2)
@@ -571,7 +577,7 @@ class GameInfo:
     def update_pheromone(self, ant: Ant) -> None:
         if ant.state in (AntState.ALIVE, AntState.FROZEN):
             return
-        tau = PHEROMONE_BONUS.get(ant.state)
+        tau = PHEROMONE_BONUS_INT.get(ant.state)
         if tau is None:
             return
         player = ant.player
@@ -595,9 +601,26 @@ class GameInfo:
             x = next_x
             y = next_y
         if not visited[x][y]:
-            self.pheromone[player][x][y] += tau
-            if self.pheromone[player][x][y] < PHEROMONE_MIN:
-                self.pheromone[player][x][y] = PHEROMONE_MIN
+            self.pheromone[player][x][y] = max(PHEROMONE_MIN, self.pheromone[player][x][y] + tau)
+
+    @staticmethod
+    def sanitize_ant_path(ant: Ant) -> None:
+        x, y = PLAYER_BASES[ant.player]
+        enemy_base = PLAYER_BASES[ant.player ^ 1]
+        for move in ant.path:
+            if not 0 <= move < len(OFFSET[y % 2]):
+                ant.path.clear()
+                return
+            x += OFFSET[y % 2][move][0]
+            y += OFFSET[y % 2][move][1]
+            if not is_valid_pos(x, y):
+                ant.path.clear()
+                return
+            if (x, y) != enemy_base and not is_path(x, y):
+                ant.path.clear()
+                return
+        if (x, y) != (ant.x, ant.y):
+            ant.path.clear()
 
     @staticmethod
     def sanitize_ant_path(ant: Ant) -> None:
@@ -623,9 +646,10 @@ class GameInfo:
             for x in range(MAP_SIZE):
                 for y in range(MAP_SIZE):
                     if MAP_PROPERTY[x][y] >= 0:
-                        self.pheromone[player][x][y] = (
-                            PHEROMONE_ATTENUATING_RATIO * self.pheromone[player][x][y]
-                            + (1.0 - PHEROMONE_ATTENUATING_RATIO) * PHEROMONE_INIT
+                        p = self.pheromone[player][x][y]
+                        self.pheromone[player][x][y] = max(
+                            PHEROMONE_MIN,
+                            (LAMBDA_NUM * p + TAU_BASE_ADD_INT + 50) // LAMBDA_DENOM,
                         )
 
     def is_operation_valid(self, player_id: int, ops_or_op, new_op: Operation | None = None) -> bool:
@@ -756,17 +780,17 @@ class GameInfo:
         target_x, target_y = PLAYER_BASES[ant.player ^ 1]
         current_distance = hex_distance(ant.x, ant.y, target_x, target_y)
         best_index = 0
-        best_weighted = -1.0
-        best_raw = -1.0
+        best_weighted = -1
+        best_raw = -1
         for index, (ox, oy) in enumerate(OFFSET[ant.y % 2]):
             nx = ant.x + ox
             ny = ant.y + oy
             if (ant.path and ant.path[-1] == (index + 3) % 6) or not is_path(nx, ny):
                 continue
             next_distance = hex_distance(nx, ny, target_x, target_y)
-            weight = ETA[next_distance - current_distance + ETA_OFFSET]
+            eta = ETA_SCALED[next_distance - current_distance + ETA_OFFSET]
             raw = self.pheromone[ant.player][nx][ny]
-            weighted = weight * raw
+            weighted = raw * eta // PHEROMONE_SCALE
             if (weighted, raw, -index) > (best_weighted, best_raw, -best_index):
                 best_index = index
                 best_weighted = weighted
@@ -943,7 +967,11 @@ class Simulator:
         for x in range(MAP_SIZE):
             for y in range(MAP_SIZE):
                 if MAP_PROPERTY[x][y] >= 0:
-                    self.info.pheromone[enemy][x][y] = PHEROMONE_ATTENUATING_RATIO * self.info.pheromone[enemy][x][y] + 0.3
+                    p = self.info.pheromone[enemy][x][y]
+                    self.info.pheromone[enemy][x][y] = max(
+                        PHEROMONE_MIN,
+                        (LAMBDA_NUM * p + TAU_BASE_ADD_INT + 50) // LAMBDA_DENOM,
+                    )
         for ant in self.info.ants:
             self.info.update_pheromone(ant)
         self.info.clear_dead_and_succeeded_ants()
@@ -1146,7 +1174,7 @@ def info_from_state(state, player: int = 0, seed: int = 0) -> GameInfo:
 
     if hasattr(state, 'pheromone'):
         info.pheromone = [
-            [[float(state.pheromone[player_index][x][y]) for y in range(MAP_SIZE)] for x in range(MAP_SIZE)]
+            [[int(state.pheromone[player_index, x, y]) for y in range(MAP_SIZE)] for x in range(MAP_SIZE)]
             for player_index in range(2)
         ]
 
