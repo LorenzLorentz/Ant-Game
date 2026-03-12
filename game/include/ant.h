@@ -97,6 +97,7 @@ class Ant {
     void set_pending_behavior_to(Behavior new_behavior);
     void clear_pending_behavior();
     void grant_evasion(int stacks, bool grant_control_free_on_deplete = true);
+    void add_evasion(int stacks, bool grant_control_free_on_deplete = true);
     void reset_backtrack();
 
     Status get_status() const;

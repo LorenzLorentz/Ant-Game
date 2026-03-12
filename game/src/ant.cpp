@@ -10,6 +10,7 @@ namespace {
 constexpr int SPECIAL_BEHAVIOR_DECAY_TURNS = 5;
 constexpr int WORKER_TOWER_ATTACK_DAMAGE[3] = {1, 2, 4};
 constexpr int COMBAT_TOWER_ATTACK_DAMAGE = 3;
+constexpr int COMBAT_HP = 30;
 
 int default_behavior_expiry(Ant::Behavior behavior) {
     switch (behavior) {
@@ -28,9 +29,9 @@ Ant::Ant(int player, int id, int x, int y, int level, Kind kind)
       id(id),             // Set player and id (may be generated automatically?)
       pos_x(x), pos_y(y), // Set initial position
       level(level),       // Set level
-      hp(hp_list[level]), // Set HP and its limit
+      hp(kind == Kind::Combat ? COMBAT_HP : hp_list[level]), // Set HP and its limit
       age(0),
-      hp_limit(hp_list[level]),
+      hp_limit(kind == Kind::Combat ? COMBAT_HP : hp_list[level]),
       trail_cells({Pos(x, y)}),
       last_move(NoMove),
       path_len_total(0),
@@ -157,6 +158,15 @@ void Ant::grant_evasion(int stacks, bool grant_control_free_on_deplete) {
     if (stacks <= 0)
         return;
     shield = std::max(shield, stacks);
+    evasion = shield > 0;
+    evasion_control_free_on_break =
+        evasion_control_free_on_break || grant_control_free_on_deplete;
+}
+
+void Ant::add_evasion(int stacks, bool grant_control_free_on_deplete) {
+    if (stacks <= 0)
+        return;
+    shield += stacks;
     evasion = shield > 0;
     evasion_control_free_on_break =
         evasion_control_free_on_break || grant_control_free_on_deplete;

@@ -6,7 +6,7 @@ from typing import List, Optional, Sequence
 
 from SDK.utils.constants import (
     ANT_AGE_LIMIT,
-    ANT_GENERATION_CYCLE,
+    ANT_GENERATION_SCHEDULE,
     ANT_KILL_REWARD,
     ANT_MAX_HP,
     BASIC_INCOME,
@@ -260,7 +260,8 @@ class Base:
         return Base(self.player, self.x, self.y, self.hp, self.gen_speed_level, self.ant_level)
 
     def generate_ant(self, ant_id: int, round_id: int) -> Optional[Ant]:
-        if round_id % ANT_GENERATION_CYCLE[self.gen_speed_level] != 0:
+        numerator, denominator = ANT_GENERATION_SCHEDULE[self.gen_speed_level]
+        if round_id != 0 and (round_id * denominator) // numerator <= ((round_id - 1) * denominator) // numerator:
             return None
         return Ant(ant_id, self.player, self.x, self.y, ANT_MAX_HP[self.ant_level], self.ant_level, 0, AntState.ALIVE)
 

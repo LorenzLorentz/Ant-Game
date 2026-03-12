@@ -6,9 +6,10 @@ from SDK.utils.constants import (
     ANT_AGE_LIMIT,
     AntBehavior,
     AntKind,
+    COMBAT_ANT_HP,
     ANT_KILL_REWARD,
     ANT_MAX_HP,
-    ANT_GENERATION_CYCLE,
+    ANT_GENERATION_SCHEDULE,
     AntStatus,
     COMBAT_TOWER_ATTACK_DAMAGE,
     MoveWeights,
@@ -136,6 +137,8 @@ class Ant:
 
     @property
     def max_hp(self) -> int:
+        if self.kind == AntKind.COMBAT:
+            return COMBAT_ANT_HP
         return ANT_MAX_HP[self.level]
 
     @property
@@ -163,6 +166,13 @@ class Ant:
         if stacks <= 0:
             return
         self.shield = max(self.shield, stacks)
+        self.evasion = self.shield > 0
+        self.evasion_grants_control_free = self.evasion_grants_control_free or grant_control_free_on_deplete
+
+    def add_evasion(self, stacks: int, *, grant_control_free_on_deplete: bool = True) -> None:
+        if stacks <= 0:
+            return
+        self.shield += stacks
         self.evasion = self.shield > 0
         self.evasion_grants_control_free = self.evasion_grants_control_free or grant_control_free_on_deplete
 
@@ -356,7 +366,10 @@ class Base:
         )
 
     def should_spawn(self, round_index: int) -> bool:
-        return round_index % ANT_GENERATION_CYCLE[self.generation_level] == 0
+        numerator, denominator = ANT_GENERATION_SCHEDULE[self.generation_level]
+        if round_index == 0:
+            return True
+        return (round_index * denominator) // numerator > ((round_index - 1) * denominator) // numerator
 
     def spawn_ant(self, ant_id: int, *, kind: AntKind = AntKind.WORKER) -> Ant:
         return Ant(
@@ -364,7 +377,7 @@ class Base:
             player=self.player,
             x=self.x,
             y=self.y,
-            hp=ANT_MAX_HP[self.ant_level],
+            hp=COMBAT_ANT_HP if kind == AntKind.COMBAT else ANT_MAX_HP[self.ant_level],
             level=self.ant_level,
             kind=kind,
         )

@@ -35,7 +35,7 @@ constexpr double STALL_MOVE_PENALTY = 0.35;
 constexpr double RETREAT_MOVE_PENALTY = 0.8;
 constexpr double TARGET_PULL_DISTANCE_SCALE = 0.18;
 constexpr int TOWER_KAMIKAZE_HP_THRESHOLD = 5;
-constexpr double SPAWN_BEHAVIOR_PROBS[4] = {0.4, 0.3, 0.25, 0.05};
+constexpr double SPAWN_BEHAVIOR_PROBS[4] = {0.4, 0.3, 0.15, 0.15};
 struct SpawnProfile {
     Ant::Kind kind;
     Ant::Behavior behavior;
@@ -814,7 +814,7 @@ void Game::generate_ants()
         ants.back().trail_cells = {Pos(cell.first, cell.second)};
         ants.back().set_behavior(behavior);
         if (kind == Ant::Kind::Combat)
-            grant_emergency_evasion(ants.back(), 2, true);
+            grant_emergency_evasion(ants.back(), 3, true);
         output.add_ant(ants.back());
         ant_id++;
     };
@@ -827,7 +827,7 @@ void Game::generate_ants()
                            profile.kind));
         ants.back().set_behavior(profile.behavior);
         if (profile.kind == Ant::Kind::Combat)
-            grant_emergency_evasion(ants.back(), 2, true);
+            grant_emergency_evasion(ants.back(), 3, true);
         output.add_ant(ants.back());
         ant_id++;
     }
@@ -839,7 +839,7 @@ void Game::generate_ants()
                            profile.kind));
         ants.back().set_behavior(profile.behavior);
         if (profile.kind == Ant::Kind::Combat)
-            grant_emergency_evasion(ants.back(), 2, true);
+            grant_emergency_evasion(ants.back(), 3, true);
         output.add_ant(ants.back());
         ant_id++;
     }
@@ -852,6 +852,51 @@ void Game::generate_ants()
             distance(Pos(tower.get_x(), tower.get_y()), Pos(it.x, it.y)) <= 3)
             continue;
         tower.round++;
+        if (tower.get_type() == TowerType::ProducerMedic &&
+            tower.get_support_interval() > 0 &&
+            tower.round % tower.get_support_interval() == 0) {
+            Pos enemy = tower.get_player() ? Pos(PLAYER_0_BASE_CAMP_X, PLAYER_0_BASE_CAMP_Y)
+                                           : Pos(PLAYER_1_BASE_CAMP_X, PLAYER_1_BASE_CAMP_Y);
+            int frontline_distance = 1e9;
+            for (auto &ant : ants) {
+                if (ant.get_player() != tower.get_player())
+                    continue;
+                auto status = ant.get_status();
+                if (status != Ant::Status::Alive && status != Ant::Status::Frozen)
+                    continue;
+                frontline_distance = std::min(
+                    frontline_distance,
+                    distance(Pos(ant.get_x(), ant.get_y()), enemy));
+            }
+            Ant *target = nullptr;
+            for (auto &ant : ants) {
+                if (ant.get_player() != tower.get_player())
+                    continue;
+                auto status = ant.get_status();
+                if (status != Ant::Status::Alive && status != Ant::Status::Frozen)
+                    continue;
+                int ant_distance = distance(Pos(ant.get_x(), ant.get_y()), enemy);
+                if (ant_distance > frontline_distance + 1)
+                    continue;
+                if (target == nullptr ||
+                    (target->get_kind() != Ant::Kind::Combat &&
+                     ant.get_kind() == Ant::Kind::Combat) ||
+                    (target->get_kind() == ant.get_kind() &&
+                     (ant.get_hp() < target->get_hp() ||
+                      (ant.get_hp() == target->get_hp() &&
+                       (ant_distance <
+                            distance(Pos(target->get_x(), target->get_y()), enemy) ||
+                        (ant_distance ==
+                             distance(Pos(target->get_x(), target->get_y()), enemy) &&
+                         ant.get_id() < target->get_id())))))) {
+                    target = &ant;
+                }
+            }
+            if (target != nullptr) {
+                target->set_hp_true(target->get_hp_limit() - target->get_hp());
+                target->add_evasion(1, true);
+            }
+        }
         if (tower.round < tower.get_spawn_interval())
             continue;
         SpawnProfile profile = draw_spawn_profile();
@@ -859,34 +904,6 @@ void Game::generate_ants()
         if (tower.get_type() == TowerType::ProducerSiege &&
             random_float() <= tower.get_siege_spawn_chance()) {
             spawn_from_tower(tower, Ant::Kind::Combat, Ant::Behavior::Default);
-        } else if (tower.get_type() == TowerType::ProducerMedic) {
-            Pos enemy = tower.get_player() ? Pos(PLAYER_0_BASE_CAMP_X, PLAYER_0_BASE_CAMP_Y)
-                                           : Pos(PLAYER_1_BASE_CAMP_X, PLAYER_1_BASE_CAMP_Y);
-            Ant *target = nullptr;
-            for (auto &ant : ants) {
-                if (ant.get_player() != tower.get_player() ||
-                    ant.get_status() == Ant::Status::Fail ||
-                    ant.get_status() == Ant::Status::TooOld)
-                    continue;
-                if (distance(Pos(ant.get_x(), ant.get_y()),
-                             Pos(tower.get_x(), tower.get_y())) >
-                    tower.get_support_range())
-                    continue;
-                if (target == nullptr ||
-                    distance(Pos(ant.get_x(), ant.get_y()), enemy) <
-                        distance(Pos(target->get_x(), target->get_y()), enemy) ||
-                    (distance(Pos(ant.get_x(), ant.get_y()), enemy) ==
-                         distance(Pos(target->get_x(), target->get_y()), enemy) &&
-                     ant.get_id() < target->get_id())) {
-                    target = &ant;
-                }
-            }
-            if (target != nullptr) {
-                target->set_hp_true(tower.get_heal_amount());
-                if (target->get_hp() > target->get_hp_limit())
-                    target->set_hp_true(target->get_hp_limit() - target->get_hp());
-                grant_emergency_evasion(*target, 1, true);
-            }
         }
         tower.round = 0;
     }

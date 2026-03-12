@@ -17,6 +17,7 @@ from SDK.utils.constants import (
     BEWITCH_MOVE_TEMPERATURE,
     BASIC_INCOME,
     CENTERLINE_WEIGHTS,
+    COMBAT_INITIAL_EVASION,
     CROWDING_PENALTY,
     DEFAULT_MOVE_TEMPERATURE,
     HIGHLAND_CELLS,
@@ -392,7 +393,7 @@ class GameState:
     def _initialize_spawned_ant(self, ant: Ant, behavior: AntBehavior) -> None:
         ant.set_behavior(behavior)
         if ant.kind == AntKind.COMBAT:
-            ant.grant_evasion(2, grant_control_free_on_deplete=True)
+            ant.grant_evasion(COMBAT_INITIAL_EVASION, grant_control_free_on_deplete=True)
 
     def _spawn_ant_from_tower(self, tower: Tower, kind: AntKind, behavior: AntBehavior) -> None:
         cells = self._spawn_cells_for_tower(tower)
@@ -427,7 +428,7 @@ class GameState:
         self.next_ant_id += 1
 
     def _support_frontline_ant(self, tower: Tower) -> None:
-        if tower.stats.heal_amount <= 0 or tower.stats.support_range <= 0:
+        if tower.stats.support_interval <= 0:
             return
         enemy_base = PLAYER_BASES[1 - tower.player]
         candidates = [
@@ -435,13 +436,24 @@ class GameState:
             for ant in self.ants
             if ant.player == tower.player
             and ant.is_alive()
-            and hex_distance(ant.x, ant.y, tower.x, tower.y) <= tower.stats.support_range
         ]
         if not candidates:
             return
-        target = min(candidates, key=lambda ant: (hex_distance(ant.x, ant.y, *enemy_base), ant.ant_id))
-        target.hp = min(target.max_hp, target.hp + tower.stats.heal_amount)
-        target.grant_evasion(1, grant_control_free_on_deplete=True)
+        frontline_distance = min(hex_distance(ant.x, ant.y, *enemy_base) for ant in candidates)
+        candidates = [
+            ant for ant in candidates if hex_distance(ant.x, ant.y, *enemy_base) <= frontline_distance + 1
+        ]
+        target = min(
+            candidates,
+            key=lambda ant: (
+                ant.kind != AntKind.COMBAT,
+                ant.hp,
+                hex_distance(ant.x, ant.y, *enemy_base),
+                ant.ant_id,
+            ),
+        )
+        target.hp = target.max_hp
+        target.add_evasion(1, grant_control_free_on_deplete=True)
         target.refresh_status()
 
     def _remove_tower(self, tower_id: int) -> None:
@@ -988,6 +1000,12 @@ class GameState:
             if self.is_shielded_by_emp(tower.player, tower.x, tower.y):
                 continue
             tower.tick()
+            if (
+                tower.tower_type == TowerType.PRODUCER_MEDIC
+                and tower.stats.support_interval > 0
+                and int(round(max(tower.cooldown_clock, 0.0))) % tower.stats.support_interval == 0
+            ):
+                self._support_frontline_ant(tower)
             if not tower.ready_to_fire():
                 continue
             kind, behavior = self._draw_spawn_profile()
@@ -995,8 +1013,6 @@ class GameState:
             if tower.tower_type == TowerType.PRODUCER_SIEGE:
                 if self._random_float() <= tower.stats.siege_spawn_chance:
                     self._spawn_ant_from_tower(tower, AntKind.COMBAT, AntBehavior.DEFAULT)
-            elif tower.tower_type == TowerType.PRODUCER_MEDIC:
-                self._support_frontline_ant(tower)
             tower.reset_cooldown()
 
     def _increase_ant_age(self) -> None:

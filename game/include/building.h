@@ -93,6 +93,7 @@ class DefenseTower : public Building {
     int get_hp_limit() const { return hp_limit; }
     bool is_producer() const;
     int get_spawn_interval() const;
+    int get_support_interval() const;
     int get_support_range() const;
     double get_siege_spawn_chance() const;
     int get_heal_amount() const;
