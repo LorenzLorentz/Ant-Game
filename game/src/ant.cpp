@@ -9,7 +9,7 @@ const int hp_list[3] = {20, 25, 30};
 namespace {
 constexpr int SPECIAL_BEHAVIOR_DECAY_TURNS = 5;
 constexpr int WORKER_TOWER_ATTACK_DAMAGE[3] = {1, 2, 4};
-constexpr int COMBAT_TOWER_ATTACK_DAMAGE = 3;
+constexpr int COMBAT_TOWER_ATTACK_DAMAGE = 5;
 constexpr int COMBAT_HP = 30;
 
 int default_behavior_expiry(Ant::Behavior behavior) {
@@ -98,6 +98,10 @@ int Ant::get_tower_attack_damage() const {
     return WORKER_TOWER_ATTACK_DAMAGE[level];
 }
 
+bool Ant::should_self_destruct_on_tower_attack() const {
+    return kind == Kind::Combat && hp * 2 < hp_limit;
+}
+
 void Ant::increase_age() { age++; }
 
 void Ant::increase_behavior_rounds() { behavior_rounds++; }
@@ -119,20 +123,20 @@ void Ant::set_behavior(Behavior new_behavior, bool reset_rounds,
 
 void Ant::update_move_weights() {
     if (kind == Kind::Combat) {
-        move_weights.progress = 0.7;
-        move_weights.pheromone = 0.1;
-        move_weights.crowding = 0.25;
-        move_weights.expected_damage = 0.8;
-        move_weights.control_risk = 0.35;
-        move_weights.tower_pull = 1.35;
+        move_weights.progress = 1.3;
+        move_weights.pheromone = 0.05;
+        move_weights.crowding = 0.15;
+        move_weights.expected_damage = 1.1;
+        move_weights.control_risk = 0.45;
+        move_weights.tower_pull = 1.75;
         return;
     }
-    move_weights.progress = 1.0;
-    move_weights.pheromone = 0.3;
-    move_weights.crowding = 0.35;
-    move_weights.expected_damage = 1.15;
-    move_weights.control_risk = 0.85;
-    move_weights.tower_pull = 0.0;
+    move_weights.progress = 1.05;
+    move_weights.pheromone = 0.15;
+    move_weights.crowding = 0.4;
+    move_weights.expected_damage = 2.0;
+    move_weights.control_risk = 1.15;
+    move_weights.tower_pull = 0.45;
 }
 
 void Ant::set_kind(Kind new_kind) {

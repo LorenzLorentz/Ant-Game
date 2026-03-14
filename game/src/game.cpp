@@ -29,7 +29,8 @@ constexpr int RANDOM_FLOAT_BITS = 24;
 constexpr double DEFAULT_MOVE_TEMPERATURE = 1.75;
 constexpr double BEWITCH_MOVE_TEMPERATURE = 1.5;
 constexpr double CROWDING_PENALTY = 1.25;
-constexpr double RISK_FIELD_DISTANCE_DECAY = 0.82;
+constexpr double WORKER_RISK_FIELD_DISTANCE_DECAY = 0.9;
+constexpr double COMBAT_RISK_FIELD_DISTANCE_DECAY = 0.7;
 constexpr double DAMAGE_FIELD_HP_REFERENCE = 25.0;
 constexpr int RANDOM_ANT_DECAY_TURNS = 5;
 constexpr int ANT_TELEPORT_INTERVAL = 10;
@@ -37,7 +38,12 @@ constexpr double ANT_TELEPORT_RATIO = 0.2;
 constexpr double STALL_MOVE_PENALTY = 0.35;
 constexpr double RETREAT_MOVE_PENALTY = 0.8;
 constexpr double TARGET_PULL_DISTANCE_SCALE = 0.18;
-constexpr int TOWER_KAMIKAZE_HP_THRESHOLD = 5;
+constexpr int COMBAT_SELF_DESTRUCT_DAMAGE = 10;
+constexpr int COMBAT_SELF_DESTRUCT_RANGE = 1;
+constexpr double COMBAT_SELF_DESTRUCT_PULL_BONUS = 3.0;
+constexpr double COMBAT_TOWER_TARGET_BONUS = 8.0;
+constexpr double COMBAT_TOWER_APPROACH_PULL_BASE = 8.0;
+constexpr double WORKER_TOWER_TARGET_BONUS = 2.75;
 constexpr double SPAWN_BEHAVIOR_PROBS[4] = {0.4, 0.3, 0.15, 0.15};
 struct SpawnProfile {
     Ant::Kind kind;
@@ -224,6 +230,8 @@ std::vector<double> Game::directional_field_scores(
 
     std::vector<double> numerators(candidates.size(), 0.0);
     std::vector<double> denominators(candidates.size(), 0.0);
+    double decay = ant.is_combat_ant() ? COMBAT_RISK_FIELD_DISTANCE_DECAY
+                                       : WORKER_RISK_FIELD_DISTANCE_DECAY;
     for (int x = 0; x < MAP_SIZE; ++x)
         for (int y = 0; y < MAP_SIZE; ++y) {
             if (!ant_can_walk_to(x, y))
@@ -231,9 +239,7 @@ std::vector<double> Game::directional_field_scores(
             int owner_index = owner[x][y];
             if (owner_index < 0)
                 continue;
-            double weight = std::pow(
-                RISK_FIELD_DISTANCE_DECAY,
-                static_cast<double>(distance_map[x][y]));
+            double weight = std::pow(decay, static_cast<double>(distance_map[x][y]));
             numerators[owner_index] += field[ant.get_player()][x][y] * weight;
             denominators[owner_index] += weight;
         }
@@ -352,24 +358,59 @@ double Game::control_risk_cost(const Ant &ant, int x, int y) const {
 double Game::tower_pull_score(const Ant &ant, int x, int y,
                               const DefenseTower *tower_target) const {
     if (tower_target != nullptr) {
-        double bonus = ant.is_combat_ant() ? 6.0 : 1.5;
-        bonus += std::max(0, TOWER_KAMIKAZE_HP_THRESHOLD - tower_target->get_hp()) *
-                 0.75;
+        double bonus = ant.is_combat_ant() ? COMBAT_TOWER_TARGET_BONUS
+                                           : WORKER_TOWER_TARGET_BONUS;
+        if (ant.should_self_destruct_on_tower_attack())
+            bonus += COMBAT_SELF_DESTRUCT_PULL_BONUS;
         return bonus;
     }
     if (!ant.is_combat_ant())
         return 0.0;
     double best = 0.0;
+    double self_destruct_bonus =
+        ant.should_self_destruct_on_tower_attack() ? COMBAT_SELF_DESTRUCT_PULL_BONUS
+                                                   : 0.0;
     for (const auto &tower : defensive_towers) {
         if (tower.destroy() || tower.get_player() == ant.get_player())
             continue;
         double distance_score =
-            std::max(0.0, 6.0 - distance(Pos(x, y), Pos(tower.get_x(), tower.get_y())));
-        double hp_score =
-            std::max(0, TOWER_KAMIKAZE_HP_THRESHOLD - tower.get_hp()) * 0.6;
-        best = std::max(best, distance_score + hp_score);
+            std::max(0.0, COMBAT_TOWER_APPROACH_PULL_BASE -
+                              distance(Pos(x, y), Pos(tower.get_x(), tower.get_y())));
+        best = std::max(best, distance_score + self_destruct_bonus);
     }
     return best;
+}
+
+Pos Game::move_target_for_ant(const Ant &ant) const {
+    Pos enemy = ant.get_player() ? Pos(PLAYER_0_BASE_CAMP_X, PLAYER_0_BASE_CAMP_Y)
+                                 : Pos(PLAYER_1_BASE_CAMP_X, PLAYER_1_BASE_CAMP_Y);
+    if (!ant.is_combat_ant())
+        return enemy;
+    const DefenseTower *best_tower = nullptr;
+    int best_distance = std::numeric_limits<int>::max();
+    int best_enemy_distance = std::numeric_limits<int>::max();
+    int best_id = std::numeric_limits<int>::max();
+    for (const auto &tower : defensive_towers) {
+        if (tower.destroy() || tower.get_player() == ant.get_player())
+            continue;
+        int distance_to_ant =
+            distance(Pos(ant.get_x(), ant.get_y()), Pos(tower.get_x(), tower.get_y()));
+        int distance_to_enemy =
+            distance(Pos(tower.get_x(), tower.get_y()), enemy);
+        if (distance_to_ant < best_distance ||
+            (distance_to_ant == best_distance &&
+             (distance_to_enemy < best_enemy_distance ||
+              (distance_to_enemy == best_enemy_distance &&
+               tower.get_id() < best_id)))) {
+            best_tower = &tower;
+            best_distance = distance_to_ant;
+            best_enemy_distance = distance_to_enemy;
+            best_id = tower.get_id();
+        }
+    }
+    if (best_tower != nullptr)
+        return Pos(best_tower->get_x(), best_tower->get_y());
+    return enemy;
 }
 
 bool Game::ant_in_own_half(const Ant &ant) const {
@@ -475,8 +516,7 @@ void Game::damage_ant_by_tower(DefenseTower &tower, Ant &ant) {
 
 int Game::choose_ant_move(const Ant &ant) {
     refresh_static_risk_fields();
-    Pos target = ant.get_player() ? Pos(PLAYER_0_BASE_CAMP_X, PLAYER_0_BASE_CAMP_Y)
-                                  : Pos(PLAYER_1_BASE_CAMP_X, PLAYER_1_BASE_CAMP_Y);
+    Pos target = move_target_for_ant(ant);
     bool allow_backtrack = ant.get_behavior() == Ant::Behavior::Randomized ||
                            ant.get_behavior() == Ant::Behavior::Bewitched;
     std::vector<std::tuple<int, int, int>> candidates;
@@ -593,12 +633,24 @@ int Game::choose_ant_move(const Ant &ant) {
 }
 
 void Game::attack_tower_from_ant(Ant &ant, DefenseTower &tower) {
-    if (ant.is_combat_ant() && tower.get_hp() < TOWER_KAMIKAZE_HP_THRESHOLD) {
-        tower.take_damage(tower.get_hp());
-        tower.set_changed_this_round();
-        map.destroy(tower.get_x(), tower.get_y());
-        tower.set_destroy();
-        mark_risk_fields_dirty();
+    if (ant.should_self_destruct_on_tower_attack()) {
+        const Pos blast_center(tower.get_x(), tower.get_y());
+        bool destroyed_any_tower = false;
+        for (auto &other : defensive_towers) {
+            if (other.destroy() || other.get_player() == ant.get_player())
+                continue;
+            if (distance(blast_center, Pos(other.get_x(), other.get_y())) >
+                COMBAT_SELF_DESTRUCT_RANGE)
+                continue;
+            other.set_changed_this_round();
+            if (!other.take_damage(COMBAT_SELF_DESTRUCT_DAMAGE))
+                continue;
+            map.destroy(other.get_x(), other.get_y());
+            other.set_destroy();
+            destroyed_any_tower = true;
+        }
+        if (destroyed_any_tower)
+            mark_risk_fields_dirty();
         ant.set_hp_true(-ant.get_hp());
         return;
     }

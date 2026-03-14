@@ -28,6 +28,9 @@ from SDK.utils.constants import (
     LAMBDA_NUM,
     MAP_SIZE,
     MAX_ROUND,
+    COMBAT_SELF_DESTRUCT_DAMAGE,
+    COMBAT_SELF_DESTRUCT_RANGE,
+    COMBAT_RISK_FIELD_DISTANCE_DECAY,
     OFFSET,
     OperationType,
     PATH_CELLS,
@@ -46,13 +49,13 @@ from SDK.utils.constants import (
     SUPER_WEAPON_STATS,
     SuperWeaponType,
     TARGET_PULL_DISTANCE_SCALE,
-    TOWER_KAMIKAZE_HP_THRESHOLD,
     TOWER_BUILD_BASE_COST,
     TOWER_BUILD_RATIO,
     TOWER_DOWNGRADE_REFUND_RATIO,
     TOWER_STATS,
     TOWER_UPGRADE_TREE,
     TowerType,
+    WORKER_RISK_FIELD_DISTANCE_DECAY,
     WeaponStats,
     AntStatus,
     LEVEL2_TOWER_UPGRADE_COST,
@@ -65,9 +68,12 @@ RNG_MASK = (1 << 48) - 1
 RNG_MULTIPLIER = 25214903917
 RNG_INCREMENT = 11
 RANDOM_FLOAT_BITS = 24
-RISK_FIELD_DISTANCE_DECAY = 0.82
 DAMAGE_FIELD_HP_REFERENCE = 25.0
 WALKABLE_CELLS = PATH_CELLS + PLAYER_BASES
+COMBAT_SELF_DESTRUCT_PULL_BONUS = 3.0
+COMBAT_TOWER_TARGET_BONUS = 8.0
+COMBAT_TOWER_APPROACH_PULL_BASE = 8.0
+WORKER_TOWER_TARGET_BONUS = 2.75
 
 
 @lru_cache(maxsize=2)
@@ -395,11 +401,12 @@ class GameState:
 
         numerators = [0.0] * len(candidates)
         denominators = [0.0] * len(candidates)
+        decay = COMBAT_RISK_FIELD_DISTANCE_DECAY if ant.kind == AntKind.COMBAT else WORKER_RISK_FIELD_DISTANCE_DECAY
         for x, y in WALKABLE_CELLS:
             owner_index = int(owner[x, y])
             if owner_index < 0:
                 continue
-            weight = RISK_FIELD_DISTANCE_DECAY ** int(distance_map[x, y])
+            weight = decay ** int(distance_map[x, y])
             numerators[owner_index] += float(field[ant.player, x, y]) * weight
             denominators[owner_index] += weight
 
@@ -414,19 +421,37 @@ class GameState:
 
     def _tower_pull_score(self, ant: Ant, x: int, y: int, tower_target: Tower | None = None) -> float:
         if tower_target is not None:
-            bonus = 6.0 if ant.kind == AntKind.COMBAT else 1.5
-            bonus += max(0.0, float(TOWER_KAMIKAZE_HP_THRESHOLD - tower_target.hp)) * 0.75
+            bonus = COMBAT_TOWER_TARGET_BONUS if ant.kind == AntKind.COMBAT else WORKER_TOWER_TARGET_BONUS
+            if ant.should_self_destruct_on_tower_attack:
+                bonus += COMBAT_SELF_DESTRUCT_PULL_BONUS
             return bonus
         if ant.kind != AntKind.COMBAT:
             return 0.0
         best = 0.0
+        self_destruct_bonus = COMBAT_SELF_DESTRUCT_PULL_BONUS if ant.should_self_destruct_on_tower_attack else 0.0
         for tower in self.towers:
             if tower.player == ant.player:
                 continue
-            distance_score = max(0.0, 6.0 - float(hex_distance(x, y, tower.x, tower.y)))
-            hp_score = max(0.0, float(TOWER_KAMIKAZE_HP_THRESHOLD - tower.hp)) * 0.6
-            best = max(best, distance_score + hp_score)
+            distance_score = max(0.0, COMBAT_TOWER_APPROACH_PULL_BASE - float(hex_distance(x, y, tower.x, tower.y)))
+            best = max(best, distance_score + self_destruct_bonus)
         return best
+
+    def _move_target_for_ant(self, ant: Ant) -> tuple[int, int]:
+        if ant.kind != AntKind.COMBAT:
+            return PLAYER_BASES[1 - ant.player]
+        enemy_base = PLAYER_BASES[1 - ant.player]
+        enemy_towers = [tower for tower in self.towers if tower.player != ant.player]
+        if not enemy_towers:
+            return enemy_base
+        target = min(
+            enemy_towers,
+            key=lambda tower: (
+                hex_distance(ant.x, ant.y, tower.x, tower.y),
+                hex_distance(tower.x, tower.y, *enemy_base),
+                tower.tower_id,
+            ),
+        )
+        return target.x, target.y
 
     def _compose_move_score(
         self,
@@ -874,7 +899,7 @@ class GameState:
         return candidates[self._sample_index(probabilities)][0]
 
     def _choose_ant_move(self, ant: Ant) -> int:
-        target_x, target_y = PLAYER_BASES[1 - ant.player]
+        target_x, target_y = self._move_target_for_ant(ant)
         allow_backtrack = ant.behavior in {AntBehavior.RANDOM, AntBehavior.BEWITCHED}
         candidates = self._move_candidates(ant, allow_backtrack=allow_backtrack)
         if not candidates and not allow_backtrack:
@@ -932,11 +957,20 @@ class GameState:
         return self._sample_move_from_scores(candidates, weighted_scores, DEFAULT_MOVE_TEMPERATURE)
 
     def _attack_tower_from_ant(self, ant: Ant, tower: Tower) -> None:
-        if ant.kind == AntKind.COMBAT and tower.hp < TOWER_KAMIKAZE_HP_THRESHOLD:
-            tower.hp = 0
+        if ant.should_self_destruct_on_tower_attack:
+            destroyed_ids: set[int] = set()
+            for target in self.towers:
+                if target.player == ant.player:
+                    continue
+                if hex_distance(target.x, target.y, tower.x, tower.y) > COMBAT_SELF_DESTRUCT_RANGE:
+                    continue
+                if target.take_damage(COMBAT_SELF_DESTRUCT_DAMAGE):
+                    destroyed_ids.add(target.tower_id)
+            if destroyed_ids:
+                self.towers = [candidate for candidate in self.towers if candidate.tower_id not in destroyed_ids]
+                self._mark_risk_fields_dirty()
             ant.hp = 0
             ant.refresh_status()
-            self._remove_tower(tower.tower_id)
             return
         destroyed = tower.take_damage(ant.tower_attack_damage)
         if destroyed:

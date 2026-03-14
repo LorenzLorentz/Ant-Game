@@ -86,6 +86,7 @@ class Ant {
     bool is_control_immune() const;
     bool is_combat_ant() const;
     int get_tower_attack_damage() const;
+    bool should_self_destruct_on_tower_attack() const;
 
     void increase_age();
     void increase_behavior_rounds();

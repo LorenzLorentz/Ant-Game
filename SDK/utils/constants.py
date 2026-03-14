@@ -240,26 +240,32 @@ STALL_MOVE_PENALTY = 0.35
 RETREAT_MOVE_PENALTY = 0.8
 TARGET_PULL_DISTANCE_SCALE = 0.18
 WORKER_TOWER_ATTACK_DAMAGE = (1, 2, 4)
-COMBAT_TOWER_ATTACK_DAMAGE = 3
+COMBAT_TOWER_ATTACK_DAMAGE = 5
+COMBAT_SELF_DESTRUCT_DAMAGE = 10
+COMBAT_SELF_DESTRUCT_RANGE = 1
 COMBAT_INITIAL_EVASION = 3
+WORKER_RISK_FIELD_DISTANCE_DECAY = 0.9
+COMBAT_RISK_FIELD_DISTANCE_DECAY = 0.7
+
+# Legacy compatibility constant. Combat ants no longer self-destruct based on tower HP.
 TOWER_KAMIKAZE_HP_THRESHOLD = 5
 
 MOVE_PROFILE_WEIGHTS = {
     AntKind.WORKER: MoveWeights(
-        progress=1.0,
-        pheromone=0.3,
-        crowding=0.35,
-        expected_damage=1.15,
-        control_risk=0.85,
-        tower_pull=0.0,
+        progress=1.05,
+        pheromone=0.15,
+        crowding=0.4,
+        expected_damage=2.0,
+        control_risk=1.15,
+        tower_pull=0.45,
     ),
     AntKind.COMBAT: MoveWeights(
-        progress=0.7,
-        pheromone=0.1,
-        crowding=0.25,
-        expected_damage=0.8,
-        control_risk=0.35,
-        tower_pull=1.35,
+        progress=1.3,
+        pheromone=0.05,
+        crowding=0.15,
+        expected_damage=1.1,
+        control_risk=0.45,
+        tower_pull=1.75,
     ),
 }
 

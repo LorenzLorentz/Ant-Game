@@ -253,6 +253,47 @@ def test_default_ant_prefers_advancing_move_on_clear_path() -> None:
     assert advancing >= 12
 
 
+def test_combat_ant_targets_nearest_enemy_tower_before_base() -> None:
+    state = GameState.initial(seed=17)
+    ant = Ant(0, 0, 8, 9, hp=30, level=0, kind=AntKind.COMBAT, behavior=AntBehavior.CONSERVATIVE)
+    state.ants.append(ant)
+    state.towers.extend(
+        [
+            Tower(0, 1, 8, 6, TowerType.BASIC, cooldown_clock=2.0),
+            Tower(1, 1, 14, 9, TowerType.BASIC, cooldown_clock=2.0),
+        ]
+    )
+    target = state._move_target_for_ant(ant)
+    before = hex_distance(ant.x, ant.y, *target)
+    state._resolve_ant_step(ant, state._choose_ant_move(ant))
+    after = hex_distance(ant.x, ant.y, *target)
+    assert target == (8, 6)
+    assert after < before
+
+
+def test_worker_ant_prefers_safe_advancing_lane_over_adjacent_tower_attack() -> None:
+    state = GameState.initial(seed=18)
+    ant = Ant(0, 0, 11, 8, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    state.ants.append(ant)
+    state.towers.append(Tower(0, 1, 12, 9, TowerType.BASIC, cooldown_clock=2.0))
+    chosen = state._choose_ant_move(ant)
+    assert chosen == 4
+
+
+def test_worker_ant_attacks_adjacent_tower_when_pushing_forward_is_riskier() -> None:
+    state = GameState.initial(seed=19)
+    ant = Ant(0, 0, 11, 9, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    state.ants.append(ant)
+    state.towers.extend(
+        [
+            Tower(0, 1, 12, 9, TowerType.BASIC, cooldown_clock=2.0),
+            Tower(1, 1, 14, 9, TowerType.BASIC, cooldown_clock=2.0),
+        ]
+    )
+    chosen = state._choose_ant_move(ant)
+    assert chosen == 4
+
+
 def test_teleport_keeps_own_half_ant_in_own_half() -> None:
     state = GameState.initial(seed=10)
     ant = Ant(0, 0, 4, 9, hp=10, level=0, behavior=AntBehavior.DEFAULT)
@@ -512,21 +553,39 @@ def test_worker_ant_virtual_attack_damages_tower_without_moving() -> None:
     assert tower.hp == 9
 
 
-def test_combat_ant_kamikaze_breaks_low_hp_tower() -> None:
+def test_combat_ant_at_half_hp_uses_base_attack_without_self_destruct() -> None:
     state = GameState.initial(seed=3)
-    tower = Tower(0, 1, 12, 9, TowerType.BASIC, cooldown_clock=2.0, hp=4)
-    ant = Ant(22, 0, 11, 9, hp=10, level=0, kind=AntKind.COMBAT)
+    tower = Tower(0, 1, 12, 9, TowerType.BASIC, cooldown_clock=2.0, hp=10)
+    ant = Ant(22, 0, 11, 9, hp=15, level=0, kind=AntKind.COMBAT)
     ant.grant_evasion(2, grant_control_free_on_deplete=True)
     state.towers.append(tower)
     state.ants.append(ant)
     direction = direction_between(ant.x, ant.y, tower.x, tower.y)
     state._resolve_ant_step(ant, direction)
+    assert ant.hp == 15
+    assert ant.status == AntStatus.ALIVE
+    assert tower.hp == 5
+    assert len(state.towers) == 1
+
+
+def test_combat_ant_self_destruct_damages_target_and_neighboring_towers() -> None:
+    state = GameState.initial(seed=4)
+    target = Tower(0, 1, 14, 9, TowerType.BASIC, cooldown_clock=2.0, hp=10)
+    nearby = Tower(1, 1, 14, 10, TowerType.BASIC, cooldown_clock=2.0, hp=12)
+    ant = Ant(23, 0, 13, 10, hp=14, level=0, kind=AntKind.COMBAT)
+    state.towers.extend([target, nearby])
+    state.ants.append(ant)
+    direction = direction_between(ant.x, ant.y, target.x, target.y)
+    state._resolve_ant_step(ant, direction)
     assert ant.hp <= 0
-    assert state.towers == []
+    assert state.tower_by_id(target.tower_id) is None
+    remaining = state.tower_by_id(nearby.tower_id)
+    assert remaining is not None
+    assert remaining.hp == 2
 
 
 def test_producer_tower_can_spawn_combat_ant_with_profile() -> None:
-    state = GameState.initial(seed=4)
+    state = GameState.initial(seed=5)
     tower = Tower(0, 0, 6, 9, TowerType.PRODUCER_SIEGE, cooldown_clock=0.0)
     state.towers.append(tower)
     state._spawn_ant_from_tower(tower, AntKind.COMBAT, AntBehavior.DEFAULT)

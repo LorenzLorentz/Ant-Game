@@ -87,6 +87,7 @@ class Game {
         const RiskField &field) const;
     double tower_pull_score(const Ant &ant, int x, int y,
                             const DefenseTower *tower_target) const;
+    Pos move_target_for_ant(const Ant &ant) const;
     void teleport_ants();
     void drift_items();
     std::pair<int, int> random_own_half_target(int player);

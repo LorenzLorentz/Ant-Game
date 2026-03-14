@@ -158,6 +158,10 @@ class Ant:
             return COMBAT_TOWER_ATTACK_DAMAGE
         return WORKER_TOWER_ATTACK_DAMAGE[self.level]
 
+    @property
+    def should_self_destruct_on_tower_attack(self) -> bool:
+        return self.kind == AntKind.COMBAT and self.hp * 2 < self.max_hp
+
     def set_kind(self, kind: AntKind) -> None:
         self.kind = kind
         self.move_weights = MOVE_PROFILE_WEIGHTS[kind]
