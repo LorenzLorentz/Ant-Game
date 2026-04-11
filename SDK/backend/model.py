@@ -8,6 +8,7 @@ from SDK.utils.constants import (
     AntBehavior,
     AntKind,
     COMBAT_ANT_HP,
+    COMBAT_ANT_KILL_REWARD,
     ANT_KILL_REWARD,
     ANT_MAX_HP,
     ANT_GENERATION_SCHEDULE,
@@ -144,6 +145,8 @@ class Ant:
 
     @property
     def kill_reward(self) -> int:
+        if self.kind == AntKind.COMBAT:
+            return COMBAT_ANT_KILL_REWARD
         return ANT_KILL_REWARD[self.level]
 
     def is_alive(self) -> bool:

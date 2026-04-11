@@ -49,8 +49,6 @@ from SDK.utils.constants import (
     SUPER_WEAPON_STATS,
     SuperWeaponType,
     TARGET_PULL_DISTANCE_SCALE,
-    TOWER_BUILD_BASE_COST,
-    TOWER_BUILD_RATIO,
     TOWER_DOWNGRADE_REFUND_RATIO,
     TOWER_STATS,
     TOWER_UPGRADE_TREE,
@@ -60,6 +58,7 @@ from SDK.utils.constants import (
     AntStatus,
     LEVEL2_TOWER_UPGRADE_COST,
     LEVEL3_TOWER_UPGRADE_COST,
+    tower_build_cost_for_count,
 )
 from SDK.backend.model import NO_MOVE, Ant, Base, Operation, Tower, WeaponEffect, default_behavior_expiry
 from SDK.utils.geometry import hex_distance, is_highland, is_path, is_valid_pos, neighbors
@@ -264,7 +263,7 @@ class GameState:
     def build_tower_cost(self, tower_count: int | None = None) -> int:
         if tower_count is None:
             tower_count = self.tower_count(0)
-        return int(TOWER_BUILD_BASE_COST * (TOWER_BUILD_RATIO ** tower_count))
+        return tower_build_cost_for_count(tower_count)
 
     def upgrade_tower_cost(self, target_type: TowerType) -> int:
         if target_type.value < 10:

@@ -163,19 +163,19 @@ class WeaponStats:
 
 TOWER_STATS = {
     TowerType.BASIC: TowerStats(5, 2.0, 1, 10),
-    TowerType.HEAVY: TowerStats(20, 2.0, 1, 15),
-    TowerType.QUICK: TowerStats(5, 1.0, 1, 15),
-    TowerType.MORTAR: TowerStats(10, 4.0, 2, 15),
+    TowerType.HEAVY: TowerStats(12, 2.0, 1, 15),
+    TowerType.QUICK: TowerStats(6, 1.0, 1, 15),
+    TowerType.MORTAR: TowerStats(8, 4.0, 2, 15),
     TowerType.PRODUCER: TowerStats(0, 0.0, 0, 15, spawn_interval=8),
-    TowerType.HEAVY_PLUS: TowerStats(30, 2.0, 2, 15),
-    TowerType.ICE: TowerStats(10, 2.0, 1, 15),
-    TowerType.BEWITCH: TowerStats(10, 2.0, 2, 15),
-    TowerType.QUICK_PLUS: TowerStats(5, 0.5, 1, 15),
-    TowerType.DOUBLE: TowerStats(5, 2.0, 3, 15),
+    TowerType.HEAVY_PLUS: TowerStats(25, 2.0, 1, 15),
+    TowerType.ICE: TowerStats(8, 2.0, 1, 15),
+    TowerType.BEWITCH: TowerStats(8, 2.0, 2, 15),
+    TowerType.QUICK_PLUS: TowerStats(6, 0.5, 1, 15),
+    TowerType.DOUBLE: TowerStats(6, 2.0, 3, 15),
     TowerType.SNIPER: TowerStats(10, 2.0, 4, 15),
     TowerType.MORTAR_PLUS: TowerStats(15, 4.0, 2, 15),
-    TowerType.PULSE: TowerStats(5, 4.0, 2, 15),
-    TowerType.MISSILE: TowerStats(20, 6.0, 3, 15),
+    TowerType.PULSE: TowerStats(8, 4.0, 2, 15),
+    TowerType.MISSILE: TowerStats(15, 6.0, 3, 15),
     TowerType.PRODUCER_FAST: TowerStats(0, 0.0, 0, 15, spawn_interval=6),
     TowerType.PRODUCER_SIEGE: TowerStats(0, 0.0, 0, 15, spawn_interval=8, siege_spawn_chance=0.25),
     TowerType.PRODUCER_MEDIC: TowerStats(0, 0.0, 0, 15, spawn_interval=8, support_interval=4),
@@ -199,12 +199,14 @@ SUPER_WEAPON_STATS = {
 ANT_MAX_HP = (20, 25, 25)
 COMBAT_ANT_HP = 30
 ANT_KILL_REWARD = (6, 10, 14)
+COMBAT_ANT_KILL_REWARD = 18
 ANT_BREACH_REWARD = 10
 ANT_AGE_LIMIT = 64
 ANT_GENERATION_CYCLE = (4.0, 4.0, 3.5)
 ANT_GENERATION_SCHEDULE = ((4, 1), (4, 1), (7, 2))
 BASE_UPGRADE_COST = (200, 250)
 TOWER_BUILD_BASE_COST = 15
+# Legacy compatibility constant. Build costs now alternate x2 and x1.5 growth.
 TOWER_BUILD_RATIO = 2
 LEVEL2_TOWER_UPGRADE_COST = 60
 LEVEL3_TOWER_UPGRADE_COST = 200
@@ -235,7 +237,7 @@ CROWDING_PENALTY = 1.25
 RANDOM_ANT_DECAY_TURNS = 5
 SPECIAL_BEHAVIOR_DECAY_TURNS = 5
 ANT_TELEPORT_INTERVAL = 10
-ANT_TELEPORT_RATIO = 0.2
+ANT_TELEPORT_RATIO = 0.1
 STALL_MOVE_PENALTY = 0.35
 RETREAT_MOVE_PENALTY = 0.8
 TARGET_PULL_DISTANCE_SCALE = 0.18
@@ -271,8 +273,8 @@ MOVE_PROFILE_WEIGHTS = {
 
 SPAWN_PROFILE_WEIGHTS = (
     (AntKind.WORKER, AntBehavior.DEFAULT, 0.4),
-    (AntKind.WORKER, AntBehavior.CONSERVATIVE, 0.3),
-    (AntKind.WORKER, AntBehavior.RANDOM, 0.15),
+    (AntKind.WORKER, AntBehavior.CONSERVATIVE, 0.35),
+    (AntKind.WORKER, AntBehavior.RANDOM, 0.10),
     (AntKind.COMBAT, AntBehavior.DEFAULT, 0.15),
 )
 
@@ -309,3 +311,11 @@ CENTERLINE_WEIGHTS = {
     (13, 9): 1.15,
     (12, 9): 1.2,
 }
+
+
+def tower_build_cost_for_count(tower_count: int) -> int:
+    tower_count = max(int(tower_count), 0)
+    cost = TOWER_BUILD_BASE_COST * (3 ** (tower_count // 2))
+    if tower_count % 2 == 1:
+        cost *= 2
+    return cost

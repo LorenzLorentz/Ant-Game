@@ -9,6 +9,7 @@ from SDK.utils.constants import (
     ANT_AGE_LIMIT,
     ANT_GENERATION_SCHEDULE,
     ANT_KILL_REWARD,
+    COMBAT_ANT_KILL_REWARD,
     ANT_MAX_HP,
     COMBAT_ANT_HP,
     BASIC_INCOME,
@@ -27,14 +28,13 @@ from SDK.utils.constants import (
     PLAYER_BASES,
     SUPER_WEAPON_STATS,
     SuperWeaponType,
-    TOWER_BUILD_BASE_COST,
-    TOWER_BUILD_RATIO,
     TOWER_DOWNGRADE_REFUND_RATIO,
     TOWER_STATS,
     TOWER_UPGRADE_TREE,
     AntKind,
     TowerType,
     AntStatus,
+    tower_build_cost_for_count,
 )
 from SDK.utils.geometry import hex_distance, is_highland, is_path, is_valid_pos
 
@@ -115,6 +115,8 @@ class Ant:
         return ANT_MAX_HP[self.level]
 
     def reward(self) -> int:
+        if self.kind == AntKind.COMBAT:
+            return COMBAT_ANT_KILL_REWARD
         return ANT_KILL_REWARD[self.level]
 
     def is_alive(self) -> bool:
@@ -217,8 +219,10 @@ class Tower:
         attacked: List[int] = []
         if self.cd > 0:
             self.cd -= 1
+        if self.cd > 0 or self.speed <= 0 or self.range <= 0 or self.damage <= 0:
+            return attacked
         if self.cd <= 0:
-            loops = 1 if self.speed >= 1 else int(1 / self.speed)
+            loops = 1 if self.speed >= 1 else int(round(1 / self.speed))
             target_num = 2 if self.type == TowerType.DOUBLE else 1
             while loops > 0:
                 loops -= 1
@@ -648,7 +652,7 @@ class GameInfo:
 
     @staticmethod
     def build_tower_cost(tower_num: int) -> int:
-        return int(TOWER_BUILD_BASE_COST * pow(TOWER_BUILD_RATIO, tower_num))
+        return tower_build_cost_for_count(tower_num)
 
     @staticmethod
     def upgrade_tower_cost(tower_type: int) -> int:
@@ -752,7 +756,7 @@ class Simulator:
                     if weapon.in_range(ant.x, ant.y):
                         ant.hp = 0
                         ant.state = AntState.FAIL
-                        self.info.coins[weapon.player] += ANT_KILL_REWARD[ant.level]
+                        self.info.coins[weapon.player] += ant.reward()
             elif weapon.type == SuperWeaponType.DEFLECTOR and weapon.player == 1 - perspective:
                 for ant in self.info.ants:
                     if weapon.in_range(ant.x, ant.y):
@@ -768,7 +772,7 @@ class Simulator:
             targets = tower.attack(self.info.ants)
             for idx in targets:
                 if self.info.ants[idx].state == AntState.FAIL:
-                    self.info.coins[tower.player] += ANT_KILL_REWARD[self.info.ants[idx].level]
+                    self.info.coins[tower.player] += self.info.ants[idx].reward()
 
         for ant in self.info.ants:
             ant.age += 1

@@ -21,6 +21,16 @@ namespace {
 constexpr int INITIAL_COIN = 50;
 constexpr int SPECIAL_BEHAVIOR_DECAY_TURNS = 5;
 
+int tower_build_cost_for_count(int tower_count) {
+    tower_count = std::max(tower_count, 0);
+    int cost = 15;
+    for (int index = 0; index < tower_count / 2; ++index)
+        cost *= 3;
+    if (tower_count % 2 == 1)
+        cost *= 2;
+    return cost;
+}
+
 int default_behavior_expiry(Ant::Behavior behavior) {
     switch (behavior) {
     case Ant::Behavior::Conservative:
@@ -105,8 +115,8 @@ void init_game(Game &game, unsigned long long seed) {
     game.player1.coin.coin = INITIAL_COIN;
     game.player0.coin.basic_income = 3;
     game.player1.coin.basic_income = 3;
-    game.player0.coin.tower_building_price = 15;
-    game.player1.coin.tower_building_price = 15;
+    game.player0.coin.tower_building_price = tower_build_cost_for_count(0);
+    game.player1.coin.tower_building_price = tower_build_cost_for_count(0);
     game.player0.coin.penalty = 0;
     game.player1.coin.penalty = 0;
     game.map = Map();
@@ -355,6 +365,7 @@ struct NativeState {
         }
 
         game.defensive_towers.clear();
+        std::array<int, 2> tower_counts = {0, 0};
         int max_tower_id = 0;
         for (const auto &row : tower_rows_in) {
             if (row.size() < 6)
@@ -375,9 +386,13 @@ struct NativeState {
             tower.hp = hp;
             tower.changed = false;
             tower.attacked_ants.clear();
+            if (player >= 0 && player < 2)
+                tower_counts[player] += 1;
             max_tower_id = std::max(max_tower_id, tower_id + 1);
         }
         game.tower_id = max_tower_id;
+        game.player0.coin.tower_building_price = tower_build_cost_for_count(tower_counts[0]);
+        game.player1.coin.tower_building_price = tower_build_cost_for_count(tower_counts[1]);
 
         game.ants.clear();
         int max_ant_id = 0;

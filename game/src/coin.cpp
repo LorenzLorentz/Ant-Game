@@ -6,8 +6,19 @@
 constexpr int INITIAL_COIN = 50, INITIAL_TOWER_BUILD_PRICE = 15,
               INITIAL_BARRACK_BUILD_PRICE = 0, INITIAL_BASIC_INCOME = 3,
               INITIAL_PENALTY = 0;
-constexpr float TOWER_PRICE_INCREASING_RATIO = 2,
-                BARRACK_PRICE_INCREASING_RATIO = 2;
+constexpr int COMBAT_KILL_REWARD = 18;
+
+int next_tower_build_price(int current_price) {
+    if (current_price % 2 == 0)
+        return (current_price / 2) * 3;
+    return current_price * 2;
+}
+
+int previous_tower_build_price(int current_price) {
+    if (current_price % 2 == 0)
+        return current_price / 2;
+    return (current_price / 3) * 2;
+}
 
 Coin::Coin()
     : coin(INITIAL_COIN), basic_income(INITIAL_BASIC_INCOME),
@@ -27,6 +38,10 @@ std::tuple<bool, int> Coin::basic_income_and_penalty() const {
 }
 
 void Coin::income_ant_kill(const Ant &killed_ant) {
+    if (killed_ant.get_kind() == Ant::Kind::Combat) {
+        coin += COMBAT_KILL_REWARD;
+        return;
+    }
     int level = killed_ant.get_level();
     const int coin_list[3] = {6, 10, 14};
     coin += coin_list[level];
@@ -40,7 +55,7 @@ constexpr int LEVEL1_PRICE = 60, LEVEL2_PRICE = 200;
 void Coin::income_tower_destroy(const DefenseTower &tower) {
     switch (tower.get_level()) {
     case 0: // level 0 -> -1
-        tower_building_price /= TOWER_PRICE_INCREASING_RATIO;
+        tower_building_price = previous_tower_build_price(tower_building_price);
         coin += static_cast<int>(
             (9LL * tower_building_price * std::max(tower.get_hp(), 0)) /
             (10LL * std::max(tower.get_hp_limit(), 1)));
@@ -71,7 +86,7 @@ bool Coin::isEnough_tower_upgrade(const DefenseTower &tower) const {
 
 void Coin::cost_tower_build() {
     coin -= tower_building_price;
-    tower_building_price = tower_building_price * TOWER_PRICE_INCREASING_RATIO;
+    tower_building_price = next_tower_build_price(tower_building_price);
 }
 
 void Coin::cost_tower_upgrade(const DefenseTower &tower) {

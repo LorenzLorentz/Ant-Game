@@ -8,10 +8,10 @@ from AI.ai_random import RandomAgent
 from SDK.utils.actions import ActionCatalog
 from SDK.backend import load_backend
 from SDK.utils.features import FeatureExtractor
-from SDK.utils.constants import OperationType
-from SDK.backend.engine import GameState
-from SDK.backend.forecast import Ant as ForecastAnt, AntState as ForecastAntState, ForecastState, Operation as ForecastOperation
-from SDK.backend.model import Ant
+from SDK.utils.constants import COMBAT_ANT_KILL_REWARD, AntKind, OperationType, TowerType
+from SDK.backend.engine import GameState, PublicRoundState
+from SDK.backend.forecast import Ant as ForecastAnt, AntState as ForecastAntState, ForecastSimulator, ForecastState, Operation as ForecastOperation
+from SDK.backend.model import Ant, Operation
 
 
 def test_action_catalog_returns_legal_bundles() -> None:
@@ -172,6 +172,53 @@ def test_native_backend_can_boot_and_advance() -> None:
     assert state.coins == [50, 50]
 
 
+def test_native_backend_uses_alternating_tower_build_cost_curve() -> None:
+    state = load_backend(prefer_native=True).initial_state(seed=11)
+    pending: list[Operation] = []
+    first_two_slots: list[tuple[int, int]] = []
+    for x, y in state.strategic_slots(0):
+        operation = Operation(OperationType.BUILD_TOWER, x, y)
+        if state.can_apply_operation(0, operation, pending):
+            pending.append(operation)
+            first_two_slots.append((x, y))
+        if len(first_two_slots) == 2:
+            break
+    assert len(first_two_slots) == 2
+    first_two = [
+        Operation(OperationType.BUILD_TOWER, *first_two_slots[0]),
+        Operation(OperationType.BUILD_TOWER, *first_two_slots[1]),
+    ]
+    assert state.apply_operation_list(0, first_two) == []
+    assert state.coins[0] == 5
+
+    public_state = state.to_public_round_state()
+    state.sync_public_round_state(
+        PublicRoundState(
+            round_index=public_state.round_index,
+            towers=public_state.towers,
+            ants=public_state.ants,
+            coins=(1000, public_state.coins[1]),
+            camps_hp=public_state.camps_hp,
+            speed_lv=public_state.speed_lv,
+            anthp_lv=public_state.anthp_lv,
+            weapon_cooldowns=public_state.weapon_cooldowns,
+            active_effects=public_state.active_effects,
+        )
+    )
+
+    third = None
+    for x, y in state.strategic_slots(0):
+        if (x, y) in first_two_slots:
+            continue
+        operation = Operation(OperationType.BUILD_TOWER, x, y)
+        if state.can_apply_operation(0, operation):
+            third = operation
+            break
+    assert third is not None
+    assert state.apply_operation_list(0, [third]) == []
+    assert state.coins[0] == 955
+
+
 def test_random_runs_on_python_state_without_native_backend() -> None:
     state = GameState.initial(seed=9)
     agent = RandomAgent(seed=9)
@@ -239,3 +286,38 @@ def test_forecast_max_level_base_upgrade_returns_zero_income() -> None:
     assert not info.is_operation_valid(0, ant_upgrade)
     assert info.get_operation_income(0, gen_upgrade) == 0
     assert info.get_operation_income(0, ant_upgrade) == 0
+
+
+def test_forecast_tower_build_cost_sequence_matches_alternating_spec() -> None:
+    assert [ForecastState.build_tower_cost(i) for i in range(7)] == [15, 30, 45, 90, 135, 270, 405]
+
+
+def test_forecast_combat_ant_reward_is_fixed() -> None:
+    combat = ForecastAnt(0, 0, 2, 9, 30, 0, 0, ForecastAntState.ALIVE, kind=AntKind.COMBAT)
+    elite_combat = ForecastAnt(1, 0, 2, 9, 30, 2, 0, ForecastAntState.ALIVE, kind=AntKind.COMBAT)
+
+    assert combat.reward() == COMBAT_ANT_KILL_REWARD
+    assert elite_combat.reward() == COMBAT_ANT_KILL_REWARD
+
+
+def test_forecast_producer_tower_does_not_crash_attack_loop() -> None:
+    info = ForecastState(29)
+    info.build_tower(0, 0, 6, 9, TowerType.PRODUCER)
+    info.ants.append(
+        ForecastAnt(
+            0,
+            1,
+            7,
+            9,
+            10,
+            0,
+            0,
+            ForecastAntState.ALIVE,
+        )
+    )
+
+    simulator = ForecastSimulator(info)
+    assert simulator.fast_next_round(0)
+    enemy_ant = simulator.info.ant_of_id(0)
+    assert enemy_ant is not None
+    assert enemy_ant.hp == 10

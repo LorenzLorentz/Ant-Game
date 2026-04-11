@@ -34,7 +34,7 @@ constexpr double COMBAT_RISK_FIELD_DISTANCE_DECAY = 0.7;
 constexpr double DAMAGE_FIELD_HP_REFERENCE = 25.0;
 constexpr int RANDOM_ANT_DECAY_TURNS = 5;
 constexpr int ANT_TELEPORT_INTERVAL = 10;
-constexpr double ANT_TELEPORT_RATIO = 0.2;
+constexpr double ANT_TELEPORT_RATIO = 0.1;
 constexpr double STALL_MOVE_PENALTY = 0.35;
 constexpr double RETREAT_MOVE_PENALTY = 0.8;
 constexpr double TARGET_PULL_DISTANCE_SCALE = 0.18;
@@ -44,7 +44,7 @@ constexpr double COMBAT_SELF_DESTRUCT_PULL_BONUS = 3.0;
 constexpr double COMBAT_TOWER_TARGET_BONUS = 8.0;
 constexpr double COMBAT_TOWER_APPROACH_PULL_BASE = 8.0;
 constexpr double WORKER_TOWER_TARGET_BONUS = 2.75;
-constexpr double SPAWN_BEHAVIOR_PROBS[4] = {0.4, 0.3, 0.15, 0.15};
+constexpr double SPAWN_BEHAVIOR_PROBS[4] = {0.4, 0.35, 0.10, 0.15};
 struct SpawnProfile {
     Ant::Kind kind;
     Ant::Behavior behavior;

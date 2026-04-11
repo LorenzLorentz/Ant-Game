@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from SDK.utils.constants import LAMBDA_DENOM, LAMBDA_NUM, PHEROMONE_FAIL_BONUS_INT, TAU_BASE_ADD_INT
-from SDK.utils.constants import ANT_AGE_LIMIT, ANT_TELEPORT_INTERVAL, BASIC_INCOME, INITIAL_COINS, TOWER_DOWNGRADE_REFUND_RATIO, AntBehavior, AntKind, AntStatus, OperationType, PATH_CELLS, PLAYER_BASES, SPECIAL_BEHAVIOR_DECAY_TURNS, SPAWN_PROFILE_WEIGHTS, SuperWeaponType, TowerType
+from SDK.utils.constants import ANT_AGE_LIMIT, ANT_TELEPORT_INTERVAL, ANT_TELEPORT_RATIO, BASIC_INCOME, COMBAT_ANT_KILL_REWARD, INITIAL_COINS, TOWER_DOWNGRADE_REFUND_RATIO, AntBehavior, AntKind, AntStatus, OperationType, PATH_CELLS, PLAYER_BASES, SPECIAL_BEHAVIOR_DECAY_TURNS, SPAWN_PROFILE_WEIGHTS, SuperWeaponType, TowerType
 from SDK.backend.engine import GameState, PublicRoundState
 from SDK.backend.model import Ant, Operation, Tower, WeaponEffect
 from SDK.utils.geometry import direction_between, hex_distance, is_path, neighbors
@@ -67,22 +67,24 @@ def test_tower_rebalance_stats_match_spec() -> None:
     assert Tower(0, 0, 6, 9, TowerType.QUICK).attack_range == 1
     assert Tower(0, 0, 6, 9, TowerType.DOUBLE).attack_range == 3
     assert Tower(0, 0, 6, 9, TowerType.SNIPER).attack_range == 4
-    assert Tower(0, 0, 6, 9, TowerType.HEAVY_PLUS).damage == 30
-    assert Tower(0, 0, 6, 9, TowerType.ICE).damage == 10
-    assert Tower(0, 0, 6, 9, TowerType.BEWITCH).damage == 10
+    assert Tower(0, 0, 6, 9, TowerType.HEAVY).damage == 12
+    assert Tower(0, 0, 6, 9, TowerType.HEAVY_PLUS).damage == 25
+    assert Tower(0, 0, 6, 9, TowerType.HEAVY_PLUS).attack_range == 1
+    assert Tower(0, 0, 6, 9, TowerType.ICE).damage == 8
+    assert Tower(0, 0, 6, 9, TowerType.BEWITCH).damage == 8
     assert Tower(0, 0, 6, 9, TowerType.BEWITCH).speed == 2.0
-    assert Tower(0, 0, 6, 9, TowerType.QUICK).damage == 5
-    assert Tower(0, 0, 6, 9, TowerType.QUICK_PLUS).damage == 5
+    assert Tower(0, 0, 6, 9, TowerType.QUICK).damage == 6
+    assert Tower(0, 0, 6, 9, TowerType.QUICK_PLUS).damage == 6
     assert Tower(0, 0, 6, 9, TowerType.QUICK_PLUS).attack_range == 1
-    assert Tower(0, 0, 6, 9, TowerType.DOUBLE).damage == 5
+    assert Tower(0, 0, 6, 9, TowerType.DOUBLE).damage == 6
     assert Tower(0, 0, 6, 9, TowerType.DOUBLE).speed == 2.0
-    assert Tower(0, 0, 6, 9, TowerType.MORTAR).damage == 10
+    assert Tower(0, 0, 6, 9, TowerType.MORTAR).damage == 8
     assert Tower(0, 0, 6, 9, TowerType.MORTAR_PLUS).damage == 15
     assert Tower(0, 0, 6, 9, TowerType.MORTAR_PLUS).attack_range == 2
-    assert Tower(0, 0, 6, 9, TowerType.PULSE).damage == 5
+    assert Tower(0, 0, 6, 9, TowerType.PULSE).damage == 8
     assert Tower(0, 0, 6, 9, TowerType.PULSE).speed == 4.0
     assert Tower(0, 0, 6, 9, TowerType.PULSE).attack_range == 2
-    assert Tower(0, 0, 6, 9, TowerType.MISSILE).damage == 20
+    assert Tower(0, 0, 6, 9, TowerType.MISSILE).damage == 15
     assert Tower(0, 0, 6, 9, TowerType.MISSILE).attack_range == 3
     assert Tower(0, 0, 6, 9, TowerType.PRODUCER).stats.spawn_interval == 8
     assert Tower(0, 0, 6, 9, TowerType.PRODUCER_FAST).stats.spawn_interval == 6
@@ -127,6 +129,8 @@ def test_tower_refund_ratio_matches_new_spec() -> None:
     state = GameState.initial(seed=14)
     tower = Tower(0, 0, 6, 9, TowerType.BASIC, hp=7)
     assert state.destroy_tower_income(1, tower) == int(15 * TOWER_DOWNGRADE_REFUND_RATIO * 7 / 10)
+    assert [state.build_tower_cost(i) for i in range(7)] == [15, 30, 45, 90, 135, 270, 405]
+    assert state.destroy_tower_income(3, tower) == int(45 * TOWER_DOWNGRADE_REFUND_RATIO * 7 / 10)
     assert state.downgrade_tower_income(TowerType.HEAVY) == int(60 * TOWER_DOWNGRADE_REFUND_RATIO)
 
 
@@ -212,7 +216,7 @@ def test_pulse_hits_only_enemies_within_declared_range() -> None:
     far = Ant(1, 1, 9, 9, hp=20, level=0)
     state.ants.extend([near, far])
     assert state._tower_attack(tower)
-    assert near.hp == 15
+    assert near.hp == 12
     assert near.behavior == AntBehavior.RANDOM
     assert far.hp == 20
     assert far.behavior == AntBehavior.DEFAULT
@@ -226,8 +230,8 @@ def test_mortar_hits_enemies_within_range_two_blast() -> None:
     outside = Ant(2, 1, 11, 9, hp=20, level=0)
     state.ants.extend([target, splash, outside])
     assert state._tower_attack(tower)
-    assert target.hp == 10
-    assert splash.hp == 10
+    assert target.hp == 12
+    assert splash.hp == 12
     assert outside.hp == 20
 
 
@@ -239,8 +243,8 @@ def test_missile_hits_enemies_within_range_three_blast() -> None:
     outside = Ant(2, 1, 13, 9, hp=30, level=0)
     state.ants.extend([target, splash, outside])
     assert state._tower_attack(tower)
-    assert target.hp == 10
-    assert splash.hp == 10
+    assert target.hp == 15
+    assert splash.hp == 15
     assert outside.hp == 30
 
 
@@ -403,9 +407,20 @@ def test_teleport_can_send_enemy_half_ant_anywhere_on_map() -> None:
 def test_spawn_profile_weights_match_spec() -> None:
     weights = {(kind, behavior): probability for kind, behavior, probability in SPAWN_PROFILE_WEIGHTS}
     assert weights[(AntKind.WORKER, AntBehavior.DEFAULT)] == 0.4
-    assert weights[(AntKind.WORKER, AntBehavior.CONSERVATIVE)] == 0.3
-    assert weights[(AntKind.WORKER, AntBehavior.RANDOM)] == 0.15
+    assert weights[(AntKind.WORKER, AntBehavior.CONSERVATIVE)] == 0.35
+    assert weights[(AntKind.WORKER, AntBehavior.RANDOM)] == 0.10
     assert weights[(AntKind.COMBAT, AntBehavior.DEFAULT)] == 0.15
+    assert ANT_TELEPORT_RATIO == 0.1
+
+
+def test_combat_ant_kill_reward_is_fixed() -> None:
+    worker = Ant(0, 0, 2, 9, hp=20, level=2)
+    combat = Ant(1, 1, 16, 9, hp=30, level=0, kind=AntKind.COMBAT)
+    elite_combat = Ant(2, 1, 16, 9, hp=30, level=2, kind=AntKind.COMBAT)
+
+    assert worker.kill_reward == 14
+    assert combat.kill_reward == COMBAT_ANT_KILL_REWARD
+    assert elite_combat.kill_reward == COMBAT_ANT_KILL_REWARD
 
 
 def test_natural_spawn_can_create_combat_ant_with_shield() -> None:
