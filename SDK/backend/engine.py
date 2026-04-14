@@ -95,6 +95,8 @@ COMBAT_TOWER_CLAIM_WEIGHT = 0.85
 COMBAT_TRAVEL_COST_WEIGHT = 0.90
 ATTACK_FINISH_BONUS = 3.00
 SURPLUS_HP_VALUE_WEIGHT = 0.15
+ENHANCED_WORKER_ATTACK_EXECUTION_BONUS = 1.66
+ENHANCED_COMBAT_ATTACK_EXECUTION_BONUS = 1.50
 
 
 def _half_plane_delta(player: int, x: int, y: int) -> int:
@@ -1245,6 +1247,8 @@ class GameState:
                     score += ATTACK_FINISH_BONUS
                 if blocked:
                     score += WORKER_BLOCKED_ATTACK_BONUS
+                # Count actually landing the attack this turn as an immediate gain.
+                score += ENHANCED_WORKER_ATTACK_EXECUTION_BONUS
                 score -= WORKER_TOWER_CLAIM_WEIGHT * self.enhanced_tower_claims[ant.player].get(tower_target.tower_id, 0)
                 score += ant.move_weights.pheromone * self._move_pheromone_score(ant, ant.x, ant.y)
                 weighted_scores.append(score)
@@ -1284,6 +1288,8 @@ class GameState:
             tower_target = self._enemy_tower_at(ant.player, nx, ny)
             if tower_target is not None:
                 score = self._tower_attack_value(ant, tower_target, float(ant.hp))
+                # Distinguish attacking now from merely rotating to another adjacent tower cell.
+                score += ENHANCED_COMBAT_ATTACK_EXECUTION_BONUS
                 score -= COMBAT_TOWER_CLAIM_WEIGHT * self.enhanced_tower_claims[ant.player].get(tower_target.tower_id, 0)
                 score += ant.move_weights.pheromone * self._move_pheromone_score(ant, ant.x, ant.y)
                 weighted_scores.append(score)

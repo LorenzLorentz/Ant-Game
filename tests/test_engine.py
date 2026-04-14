@@ -16,6 +16,62 @@ def _half_plane_delta(player: int, x: int, y: int) -> int:
     return hex_distance(x, y, *PLAYER_BASES[player]) - hex_distance(x, y, *PLAYER_BASES[1 - player])
 
 
+def _sample_adjacent_tower_attack_count(
+    *,
+    seeds: int,
+    ant_x: int,
+    ant_y: int,
+    kind: AntKind,
+    behavior: AntBehavior,
+    movement_policy: str = MOVEMENT_POLICY_ENHANCED,
+) -> int:
+    attacks = 0
+    for seed in range(seeds):
+        state = GameState.initial(seed=seed, movement_policy=movement_policy)
+        tower = Tower(0, 1, 12, 9, TowerType.BASIC, cooldown_clock=2.0, hp=10)
+        ant = Ant(
+            0,
+            0,
+            ant_x,
+            ant_y,
+            hp=30 if kind == AntKind.COMBAT else 20,
+            level=0,
+            kind=kind,
+            behavior=behavior,
+        )
+        state.towers.append(tower)
+        state.ants.append(ant)
+        chosen = state._choose_ant_move(ant)
+        if chosen == direction_between(ant.x, ant.y, tower.x, tower.y):
+            attacks += 1
+    return attacks
+
+
+def _sample_adjacent_tower_attack_rate(
+    *,
+    seeds: int,
+    kind: AntKind,
+    behavior: AntBehavior,
+    movement_policy: str = MOVEMENT_POLICY_ENHANCED,
+) -> float:
+    tower_x, tower_y = 12, 9
+    attacks = 0
+    samples = 0
+    for _, ant_x, ant_y in neighbors(tower_x, tower_y):
+        if not is_path(ant_x, ant_y):
+            continue
+        attacks += _sample_adjacent_tower_attack_count(
+            seeds=seeds,
+            ant_x=ant_x,
+            ant_y=ant_y,
+            kind=kind,
+            behavior=behavior,
+            movement_policy=movement_policy,
+        )
+        samples += seeds
+    return attacks / samples
+
+
 def test_initial_round_spawns_ants_and_advances_time() -> None:
     state = GameState.initial(seed=7)
     state.resolve_turn([], [])
@@ -412,6 +468,26 @@ def test_enhanced_combat_ant_prefers_flanking_path_over_stack_of_tower_fire() ->
     chosen = state._choose_ant_move(ant)
 
     assert chosen == 3
+
+
+def test_enhanced_default_combat_ant_adjacent_tower_attack_rate_is_about_eighty_percent() -> None:
+    attack_rate = _sample_adjacent_tower_attack_rate(
+        seeds=200,
+        kind=AntKind.COMBAT,
+        behavior=AntBehavior.DEFAULT,
+    )
+
+    assert 0.76 <= attack_rate <= 0.84
+
+
+def test_enhanced_default_worker_adjacent_tower_attack_rate_is_about_one_third() -> None:
+    attack_rate = _sample_adjacent_tower_attack_rate(
+        seeds=200,
+        kind=AntKind.WORKER,
+        behavior=AntBehavior.DEFAULT,
+    )
+
+    assert 0.30 <= attack_rate <= 0.37
 
 
 def test_random_move_phase_resolves_three_steps_for_selected_ant() -> None:
