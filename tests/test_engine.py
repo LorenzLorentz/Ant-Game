@@ -480,14 +480,25 @@ def test_enhanced_default_combat_ant_adjacent_tower_attack_rate_is_about_eighty_
     assert 0.76 <= attack_rate <= 0.84
 
 
-def test_enhanced_default_worker_adjacent_tower_attack_rate_is_about_one_third() -> None:
+def test_enhanced_default_worker_adjacent_single_tower_attack_rate_stays_low() -> None:
     attack_rate = _sample_adjacent_tower_attack_rate(
         seeds=200,
         kind=AntKind.WORKER,
         behavior=AntBehavior.DEFAULT,
     )
 
-    assert 0.30 <= attack_rate <= 0.37
+    assert attack_rate <= 0.05
+
+
+def test_enhanced_conservative_worker_prefers_reroute_when_single_tower_is_avoidable() -> None:
+    state = GameState.initial(seed=0, movement_policy=MOVEMENT_POLICY_ENHANCED)
+    ant = Ant(0, 0, 11, 8, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    state.ants.append(ant)
+    state.towers.append(Tower(0, 1, 12, 9, TowerType.BASIC, cooldown_clock=2.0))
+
+    chosen = state._choose_ant_move(ant)
+
+    assert chosen == 4
 
 
 def test_random_move_phase_resolves_three_steps_for_selected_ant() -> None:

@@ -95,8 +95,8 @@ COMBAT_TOWER_CLAIM_WEIGHT = 0.85
 COMBAT_TRAVEL_COST_WEIGHT = 0.90
 ATTACK_FINISH_BONUS = 3.00
 SURPLUS_HP_VALUE_WEIGHT = 0.15
-ENHANCED_WORKER_ATTACK_EXECUTION_BONUS = 1.66
 ENHANCED_COMBAT_ATTACK_EXECUTION_BONUS = 1.50
+WORKER_REROUTE_ATTACK_PENALTY_WEIGHT = 1.0
 
 
 def _half_plane_delta(player: int, x: int, y: int) -> int:
@@ -1231,6 +1231,9 @@ class GameState:
             if self._enemy_tower_at(ant.player, nx, ny) is None
         ]
         best_walk_remaining = min(walk_remaining) if walk_remaining else np.inf
+        reroute_gain = 0.0
+        if np.isfinite(current_cost) and np.isfinite(best_walk_remaining):
+            reroute_gain = max(0.0, current_cost - best_walk_remaining)
         blocked = not np.isfinite(best_walk_remaining) or not np.isfinite(current_cost) or (
             current_cost - best_walk_remaining <= WORKER_ROUTE_IMPROVEMENT_EPS
         )
@@ -1247,8 +1250,9 @@ class GameState:
                     score += ATTACK_FINISH_BONUS
                 if blocked:
                     score += WORKER_BLOCKED_ATTACK_BONUS
-                # Count actually landing the attack this turn as an immediate gain.
-                score += ENHANCED_WORKER_ATTACK_EXECUTION_BONUS
+                else:
+                    # If there is still a materially better route toward the base, keep workers moving.
+                    score -= WORKER_REROUTE_ATTACK_PENALTY_WEIGHT * reroute_gain
                 score -= WORKER_TOWER_CLAIM_WEIGHT * self.enhanced_tower_claims[ant.player].get(tower_target.tower_id, 0)
                 score += ant.move_weights.pheromone * self._move_pheromone_score(ant, ant.x, ant.y)
                 weighted_scores.append(score)
