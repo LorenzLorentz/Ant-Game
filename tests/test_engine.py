@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from SDK.utils.constants import LAMBDA_DENOM, LAMBDA_NUM, PHEROMONE_FAIL_BONUS_INT, TAU_BASE_ADD_INT
+from SDK.utils.constants import LAMBDA_DENOM, LAMBDA_NUM, PHEROMONE_FAIL_BONUS_INT, SUPER_WEAPON_STATS, TAU_BASE_ADD_INT
 from SDK.utils.constants import ANT_AGE_LIMIT, ANT_TELEPORT_INTERVAL, ANT_TELEPORT_RATIO, BASIC_INCOME, COMBAT_ANT_KILL_REWARD, INITIAL_COINS, TOWER_DOWNGRADE_REFUND_RATIO, AntBehavior, AntKind, AntStatus, OperationType, PATH_CELLS, PLAYER_BASES, SPECIAL_BEHAVIOR_DECAY_TURNS, SPAWN_PROFILE_WEIGHTS, SuperWeaponType, TowerType
 from SDK.backend.engine import (
     MOVEMENT_POLICY_ENHANCED,
@@ -153,6 +153,19 @@ def test_tower_rebalance_stats_match_spec() -> None:
     assert Tower(0, 0, 6, 9, TowerType.PRODUCER_SIEGE).stats.spawn_interval == 8
     assert Tower(0, 0, 6, 9, TowerType.PRODUCER_MEDIC).stats.spawn_interval == 8
     assert Tower(0, 0, 6, 9, TowerType.PRODUCER_MEDIC).stats.support_interval == 4
+
+
+def test_super_weapon_stats_match_updated_spec() -> None:
+    assert SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].cost == 90
+    assert SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].cooldown == 35
+    assert SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].duration == 15
+    assert SUPER_WEAPON_STATS[SuperWeaponType.EMP_BLASTER].cost == 135
+    assert SUPER_WEAPON_STATS[SuperWeaponType.EMP_BLASTER].cooldown == 45
+    assert SUPER_WEAPON_STATS[SuperWeaponType.EMP_BLASTER].duration == 10
+    assert SUPER_WEAPON_STATS[SuperWeaponType.DEFLECTOR].cost == 60
+    assert SUPER_WEAPON_STATS[SuperWeaponType.DEFLECTOR].cooldown == 25
+    assert SUPER_WEAPON_STATS[SuperWeaponType.EMERGENCY_EVASION].cost == 60
+    assert SUPER_WEAPON_STATS[SuperWeaponType.EMERGENCY_EVASION].cooldown == 25
 
 
 def test_build_and_upgrade_tower_updates_coin_and_state() -> None:
@@ -388,6 +401,39 @@ def test_directional_control_field_penalizes_lane_toward_future_control_zone() -
     assert control_scores[east_index] > control_scores[west_index]
 
 
+def test_legacy_pathfinding_avoids_lightning_storm_lane() -> None:
+    state = GameState.initial(seed=1, movement_policy=MOVEMENT_POLICY_LEGACY)
+    ant = Ant(0, 0, 2, 2, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    state.ants.append(ant)
+    baseline = state._choose_ant_move(ant)
+
+    threatened = GameState.initial(seed=1, movement_policy=MOVEMENT_POLICY_LEGACY)
+    threatened_ant = Ant(0, 0, 2, 2, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    threatened.ants.append(threatened_ant)
+    threatened.active_effects.append(WeaponEffect(SuperWeaponType.LIGHTNING_STORM, 1, 3, 0, 15))
+
+    assert baseline == 4
+    assert threatened._choose_ant_move(threatened_ant) == 5
+
+
+def test_legacy_pathfinding_prefers_deflector_and_evasion_zones() -> None:
+    base_state = GameState.initial(seed=1, movement_policy=MOVEMENT_POLICY_LEGACY)
+    ant = Ant(0, 0, 8, 9, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    base_state.ants.append(ant)
+    baseline = base_state._choose_ant_move(ant)
+
+    assert baseline == 3
+    for weapon_type, duration in (
+        (SuperWeaponType.DEFLECTOR, 10),
+        (SuperWeaponType.EMERGENCY_EVASION, 1),
+    ):
+        guided = GameState.initial(seed=1, movement_policy=MOVEMENT_POLICY_LEGACY)
+        guided_ant = Ant(0, 0, 8, 9, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+        guided.ants.append(guided_ant)
+        guided.active_effects.append(WeaponEffect(weapon_type, 0, 11, 10, duration))
+        assert guided._choose_ant_move(guided_ant) == 5
+
+
 def test_default_ant_prefers_advancing_move_on_clear_path() -> None:
     advancing = 0
     for seed in range(16):
@@ -468,6 +514,40 @@ def test_enhanced_combat_ant_prefers_flanking_path_over_stack_of_tower_fire() ->
     chosen = state._choose_ant_move(ant)
 
     assert chosen == 3
+
+
+def test_enhanced_pathfinding_avoids_lightning_storm_lane() -> None:
+    state = GameState.initial(seed=1, movement_policy=MOVEMENT_POLICY_ENHANCED)
+    ant = Ant(0, 0, 9, 9, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    state.ants.append(ant)
+    baseline = state._choose_ant_move(ant)
+
+    threatened = GameState.initial(seed=1, movement_policy=MOVEMENT_POLICY_ENHANCED)
+    threatened_ant = Ant(0, 0, 9, 9, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    threatened.ants.append(threatened_ant)
+    threatened.active_effects.append(WeaponEffect(SuperWeaponType.LIGHTNING_STORM, 1, 12, 9, 15))
+
+    assert baseline == 4
+    assert threatened._choose_ant_move(threatened_ant) == 1
+
+
+def test_enhanced_pathfinding_prefers_deflector_and_evasion_zones() -> None:
+    base_state = GameState.initial(seed=1, movement_policy=MOVEMENT_POLICY_ENHANCED)
+    ant = Ant(0, 0, 4, 6, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+    base_state.ants.append(ant)
+    baseline = base_state._choose_ant_move(ant)
+
+    assert baseline == 3
+    for weapon_type, center in (
+        (SuperWeaponType.DEFLECTOR, (8, 10)),
+        (SuperWeaponType.EMERGENCY_EVASION, (6, 10)),
+    ):
+        guided = GameState.initial(seed=1, movement_policy=MOVEMENT_POLICY_ENHANCED)
+        guided_ant = Ant(0, 0, 4, 6, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
+        guided.ants.append(guided_ant)
+        duration = 10 if weapon_type == SuperWeaponType.DEFLECTOR else 1
+        guided.active_effects.append(WeaponEffect(weapon_type, 0, center[0], center[1], duration))
+        assert guided._choose_ant_move(guided_ant) == 0
 
 
 def test_enhanced_default_combat_ant_adjacent_tower_attack_rate_is_about_eighty_percent() -> None:
@@ -631,7 +711,7 @@ def test_lightning_storm_damages_enemy_worker_and_combat_ants() -> None:
         Ant(2, 1, 10, 9, hp=30, level=0, kind=AntKind.COMBAT),
         Ant(3, 0, 9, 9, hp=20, level=0),
     ]
-    state.active_effects = [WeaponEffect(SuperWeaponType.LIGHTNING_STORM, 0, 9, 9, 20)]
+    state.active_effects = [WeaponEffect(SuperWeaponType.LIGHTNING_STORM, 0, 9, 9, 15)]
 
     state._apply_lightning_storm()
 
@@ -648,7 +728,7 @@ def test_lightning_storm_only_hits_enemy_towers_on_every_fifth_active_turn() -> 
         Tower(2, 1, 13, 9, TowerType.PRODUCER, hp=15),
         Tower(3, 0, 9, 9, TowerType.PRODUCER, hp=15),
     ]
-    state.active_effects = [WeaponEffect(SuperWeaponType.LIGHTNING_STORM, 0, 9, 9, 17)]
+    state.active_effects = [WeaponEffect(SuperWeaponType.LIGHTNING_STORM, 0, 9, 9, 12)]
 
     state._apply_lightning_storm()
     towers = {tower.tower_id: tower for tower in state.towers}
@@ -656,7 +736,7 @@ def test_lightning_storm_only_hits_enemy_towers_on_every_fifth_active_turn() -> 
     assert towers[2].hp == 15
     assert towers[3].hp == 15
 
-    state.active_effects[0].remaining_turns = 16
+    state.active_effects[0].remaining_turns = 11
     state._apply_lightning_storm()
     towers = {tower.tower_id: tower for tower in state.towers}
     assert towers[1].hp == 12

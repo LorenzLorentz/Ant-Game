@@ -151,6 +151,7 @@ class MoveWeights:
     expected_damage: float
     control_risk: float
     tower_pull: float
+    effect_pull: float
 
 
 @dataclass(frozen=True)
@@ -190,15 +191,17 @@ TOWER_UPGRADE_TREE = {
 }
 
 SUPER_WEAPON_STATS = {
-    SuperWeaponType.LIGHTNING_STORM: WeaponStats(20, 3, 100, 150),
-    SuperWeaponType.EMP_BLASTER: WeaponStats(20, 3, 100, 150),
-    SuperWeaponType.DEFLECTOR: WeaponStats(10, 3, 50, 100),
-    SuperWeaponType.EMERGENCY_EVASION: WeaponStats(1, 3, 50, 100),
+    SuperWeaponType.LIGHTNING_STORM: WeaponStats(15, 3, 35, 90),
+    SuperWeaponType.EMP_BLASTER: WeaponStats(10, 3, 45, 135),
+    SuperWeaponType.DEFLECTOR: WeaponStats(10, 3, 25, 60),
+    SuperWeaponType.EMERGENCY_EVASION: WeaponStats(1, 3, 25, 60),
 }
 
 LIGHTNING_STORM_ANT_DAMAGE = 20
 LIGHTNING_STORM_TOWER_DAMAGE = 3
 LIGHTNING_STORM_TOWER_INTERVAL = 5
+DEFLECTOR_PATH_ATTRACTION = 1.0
+EMERGENCY_EVASION_PATH_ATTRACTION = 1.35
 
 ANT_MAX_HP = (20, 25, 25)
 COMBAT_ANT_HP = 30
@@ -264,6 +267,7 @@ MOVE_PROFILE_WEIGHTS = {
         expected_damage=2.0,
         control_risk=1.15,
         tower_pull=0.45,
+        effect_pull=0.55,
     ),
     AntKind.COMBAT: MoveWeights(
         progress=1.3,
@@ -272,6 +276,7 @@ MOVE_PROFILE_WEIGHTS = {
         expected_damage=1.1,
         control_risk=0.45,
         tower_pull=1.75,
+        effect_pull=0.35,
     ),
 }
 

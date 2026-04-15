@@ -26,6 +26,8 @@ from SDK.utils.constants import (
     PHEROMONE_INIT,
     PHEROMONE_SCALE,
     PLAYER_BASES,
+    DEFLECTOR_PATH_ATTRACTION,
+    EMERGENCY_EVASION_PATH_ATTRACTION,
     LIGHTNING_STORM_ANT_DAMAGE,
     LIGHTNING_STORM_TOWER_DAMAGE,
     LIGHTNING_STORM_TOWER_INTERVAL,
@@ -635,7 +637,18 @@ class GameInfo:
                 continue
             next_dist = hex_distance(x, y, target_x, target_y)
             gain = attraction[next_dist - current + 1]
-            weighted[idx][0] = gain * self.pheromone[ant.player][x][y]
+            storm_penalty = 0.0
+            effect_pull = 0.0
+            for weapon in self.super_weapons:
+                if not weapon.in_range(x, y):
+                    continue
+                if weapon.type == SuperWeaponType.LIGHTNING_STORM and weapon.player != ant.player:
+                    storm_penalty += LIGHTNING_STORM_ANT_DAMAGE / 25.0
+                elif weapon.player == ant.player and weapon.type == SuperWeaponType.DEFLECTOR:
+                    effect_pull += DEFLECTOR_PATH_ATTRACTION
+                elif weapon.player == ant.player and weapon.type == SuperWeaponType.EMERGENCY_EVASION:
+                    effect_pull += EMERGENCY_EVASION_PATH_ATTRACTION
+            weighted[idx][0] = gain * self.pheromone[ant.player][x][y] + effect_pull - storm_penalty
             weighted[idx][1] = self.pheromone[ant.player][x][y]
         return max(range(6), key=lambda idx: (weighted[idx][0], weighted[idx][1], -idx))
 
@@ -693,8 +706,7 @@ class GameInfo:
             for ant in self.ants:
                 if ant.player == weapon.player and weapon.in_range(ant.x, ant.y):
                     ant.evasion = 2
-        else:
-            self.super_weapons.append(weapon)
+        self.super_weapons.append(weapon)
         self.super_weapon_cd[player][int(weapon_type)] = SUPER_WEAPON_STATS[weapon_type].cooldown
 
     def count_down_super_weapons_left_time(self, player: int) -> None:
@@ -749,7 +761,7 @@ class Simulator:
             if weapon.type != SuperWeaponType.LIGHTNING_STORM or weapon.player != perspective:
                 continue
             active_turn = SUPER_WEAPON_STATS[weapon.type].duration - weapon.left_time + 1
-            if active_turn % LIGHTNING_STORM_TOWER_INTERVAL != 0:
+            if active_turn <= 0 or active_turn % LIGHTNING_STORM_TOWER_INTERVAL != 0:
                 continue
             surviving_towers: List[Tower] = []
             for tower in self.info.towers:

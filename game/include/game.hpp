@@ -72,6 +72,7 @@ class Game {
     std::vector<Ant> ants;
     RiskField damage_risk_field{};
     RiskField control_risk_field{};
+    RiskField effect_pull_field{};
     bool risk_fields_dirty = true;
     MovementPolicy movement_policy = MovementPolicy::Enhanced;
     bool enhanced_move_phase_active = false;
@@ -127,7 +128,8 @@ class Game {
     void compute_enhanced_traffic_field();
     PathPlan reverse_weighted_plan(
         int player, const std::vector<std::pair<int, int>> &sources,
-        double damage_weight, double control_weight, double traffic_weight) const;
+        double damage_weight, double control_weight, double traffic_weight,
+        double effect_weight) const;
     void prepare_enhanced_move_cache(bool reset_reservations);
     void ensure_enhanced_move_cache();
     double tower_attack_value(const Ant &ant, const DefenseTower &tower, double arrival_hp) const;

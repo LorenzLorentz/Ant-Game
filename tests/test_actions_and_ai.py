@@ -180,6 +180,47 @@ def test_default_backend_stays_python() -> None:
     assert load_backend().name == "python"
 
 
+def _native_ant_row(
+    ant_id: int,
+    player: int,
+    x: int,
+    y: int,
+    *,
+    hp: int = 20,
+    behavior: AntBehavior = AntBehavior.CONSERVATIVE,
+    kind: AntKind = AntKind.WORKER,
+) -> tuple[int, ...]:
+    return (ant_id, player, x, y, hp, 0, 0, int(AntStatus.ALIVE), int(behavior), int(kind))
+
+
+def _native_position_after_advance(
+    *,
+    movement_policy: str,
+    ant_row: tuple[int, ...],
+    active_effects: list[tuple[int, ...]] | None = None,
+) -> tuple[int, int, int] | None:
+    state = load_backend(prefer_native=True).initial_state(seed=1, movement_policy=movement_policy)
+    public_state = state.to_public_round_state()
+    state.sync_public_round_state(
+        PublicRoundState(
+            round_index=1,
+            towers=[],
+            ants=[ant_row],
+            coins=public_state.coins,
+            camps_hp=public_state.camps_hp,
+            speed_lv=public_state.speed_lv,
+            anthp_lv=public_state.anthp_lv,
+            weapon_cooldowns=((0, 0, 0, 0), (0, 0, 0, 0)),
+            active_effects=active_effects or [],
+        )
+    )
+    state.advance_round()
+    ant = next((item for item in state.ants if item.ant_id == ant_row[0]), None)
+    if ant is None:
+        return None
+    return (ant.x, ant.y, ant.hp)
+
+
 def test_native_backend_can_boot_and_advance() -> None:
     state = load_backend(prefer_native=True).initial_state(seed=7)
     state.resolve_turn([], [])
@@ -250,7 +291,7 @@ def test_native_backend_lightning_storm_matches_new_damage_profile() -> None:
             speed_lv=(0, 0),
             anthp_lv=(0, 0),
             weapon_cooldowns=((0, 0, 0, 0), (0, 0, 0, 0)),
-            active_effects=[(int(SuperWeaponType.LIGHTNING_STORM), 0, 9, 9, 16)],
+            active_effects=[(int(SuperWeaponType.LIGHTNING_STORM), 0, 9, 9, 11)],
         )
     )
 
@@ -261,6 +302,78 @@ def test_native_backend_lightning_storm_matches_new_damage_profile() -> None:
     assert ants[2].hp == 10
     tower = next(tower for tower in state.towers if tower.tower_id == 7)
     assert tower.hp == 12
+
+
+def test_native_backend_uses_updated_lightning_storm_cost_cooldown_and_duration() -> None:
+    state = load_backend(prefer_native=True).initial_state(seed=29)
+    public_state = state.to_public_round_state()
+    state.sync_public_round_state(
+        PublicRoundState(
+            round_index=public_state.round_index,
+            towers=public_state.towers,
+            ants=public_state.ants,
+            coins=(90, public_state.coins[1]),
+            camps_hp=public_state.camps_hp,
+            speed_lv=public_state.speed_lv,
+            anthp_lv=public_state.anthp_lv,
+            weapon_cooldowns=public_state.weapon_cooldowns,
+            active_effects=public_state.active_effects,
+        )
+    )
+
+    illegal = state.apply_operation_list(0, [Operation(OperationType.USE_LIGHTNING_STORM, 9, 9)])
+
+    assert illegal == []
+    assert state.coins[0] == 0
+    assert int(state.weapon_cooldowns[0, SuperWeaponType.LIGHTNING_STORM]) == 35
+    effect = state.weapon_effect(SuperWeaponType.LIGHTNING_STORM, 0)
+    assert effect is not None
+    assert effect.remaining_turns == 15
+
+
+def test_native_backend_pathfinding_avoids_lightning_storm_under_both_policies() -> None:
+    legacy_ant = _native_ant_row(1, 0, 1, 7)
+    assert _native_position_after_advance(movement_policy="legacy", ant_row=legacy_ant) == (0, 8, 20)
+    assert _native_position_after_advance(
+        movement_policy="legacy",
+        ant_row=legacy_ant,
+        active_effects=[(int(SuperWeaponType.LIGHTNING_STORM), 1, 3, 10, 15)],
+    ) == (1, 6, 20)
+
+    enhanced_ant = _native_ant_row(1, 0, 2, 2)
+    assert _native_position_after_advance(movement_policy="enhanced", ant_row=enhanced_ant) == (3, 3, 20)
+    assert _native_position_after_advance(
+        movement_policy="enhanced",
+        ant_row=enhanced_ant,
+        active_effects=[(int(SuperWeaponType.LIGHTNING_STORM), 1, 1, 6, 15)],
+    ) == (3, 2, 20)
+
+
+def test_native_backend_pathfinding_prefers_deflector_and_evasion_zones() -> None:
+    legacy_ant = _native_ant_row(1, 0, 8, 9)
+    assert _native_position_after_advance(movement_policy="legacy", ant_row=legacy_ant) == (8, 8, 20)
+    for weapon_type, duration in (
+        (SuperWeaponType.DEFLECTOR, 10),
+        (SuperWeaponType.EMERGENCY_EVASION, 1),
+    ):
+        assert _native_position_after_advance(
+            movement_policy="legacy",
+            ant_row=legacy_ant,
+            active_effects=[(int(weapon_type), 0, 11, 10, duration)],
+        ) == (8, 10, 20)
+
+    enhanced_ant = _native_ant_row(1, 0, 4, 6)
+    assert _native_position_after_advance(movement_policy="enhanced", ant_row=enhanced_ant) == (5, 5, 20)
+    for weapon_type, center in (
+        (SuperWeaponType.DEFLECTOR, (8, 10)),
+        (SuperWeaponType.EMERGENCY_EVASION, (6, 10)),
+    ):
+        duration = 10 if weapon_type == SuperWeaponType.DEFLECTOR else 1
+        assert _native_position_after_advance(
+            movement_policy="enhanced",
+            ant_row=enhanced_ant,
+            active_effects=[(int(weapon_type), 0, center[0], center[1], duration)],
+        ) == (4, 7, 20)
 
 
 def test_random_runs_on_python_state_without_native_backend() -> None:
@@ -399,3 +512,28 @@ def test_forecast_lightning_storm_damages_enemy_combat_ants_without_instant_kill
     assert combat is not None
     assert worker.hp == 5
     assert combat.hp == 10
+
+
+def test_forecast_pathfinding_responds_to_storm_and_support_fields() -> None:
+    storm_base = ForecastState(1)
+    storm_ant = ForecastAnt(0, 0, 2, 10, 20, 0, 0, ForecastAntState.ALIVE)
+    storm_base.ants.append(storm_ant)
+    assert storm_base.next_move(storm_ant) == 3
+
+    storm_threat = ForecastState(1)
+    storm_threat_ant = ForecastAnt(0, 0, 2, 10, 20, 0, 0, ForecastAntState.ALIVE)
+    storm_threat.ants.append(storm_threat_ant)
+    storm_threat.use_super_weapon(SuperWeaponType.LIGHTNING_STORM, 1, 0, 8)
+    assert storm_threat.next_move(storm_threat_ant) == 4
+
+    support_base = ForecastState(1)
+    support_ant = ForecastAnt(0, 0, 2, 4, 20, 0, 0, ForecastAntState.ALIVE)
+    support_base.ants.append(support_ant)
+    assert support_base.next_move(support_ant) == 0
+
+    for weapon_type in (SuperWeaponType.DEFLECTOR, SuperWeaponType.EMERGENCY_EVASION):
+        support = ForecastState(1)
+        support_ant = ForecastAnt(0, 0, 2, 4, 20, 0, 0, ForecastAntState.ALIVE)
+        support.ants.append(support_ant)
+        support.use_super_weapon(weapon_type, 0, 2, 1)
+        assert support.next_move(support_ant) == 4

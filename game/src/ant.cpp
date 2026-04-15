@@ -129,6 +129,7 @@ void Ant::update_move_weights() {
         move_weights.expected_damage = 1.1;
         move_weights.control_risk = 0.45;
         move_weights.tower_pull = 1.75;
+        move_weights.effect_pull = 0.35;
         return;
     }
     move_weights.progress = 1.05;
@@ -137,6 +138,7 @@ void Ant::update_move_weights() {
     move_weights.expected_damage = 2.0;
     move_weights.control_risk = 1.15;
     move_weights.tower_pull = 0.45;
+    move_weights.effect_pull = 0.55;
 }
 
 void Ant::set_kind(Kind new_kind) {

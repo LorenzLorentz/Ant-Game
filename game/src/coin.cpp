@@ -114,11 +114,11 @@ void Coin::cost_base_camp_upgrade(const int& level) {
 }
 
 bool Coin::isEnough_item_applied(ItemType item) const {
-    const int cost[4] = {150, 150, 100, 100};
+    const int cost[4] = {90, 135, 60, 60};
     return coin >= cost[item];
 }
 
 void Coin::cost_item(ItemType item) {
-    const int cost[4] = {150, 150, 100, 100};
+    const int cost[4] = {90, 135, 60, 60};
     coin -= cost[item];
 }

@@ -59,6 +59,8 @@ from SDK.utils.constants import (
     AntStatus,
     LEVEL2_TOWER_UPGRADE_COST,
     LEVEL3_TOWER_UPGRADE_COST,
+    DEFLECTOR_PATH_ATTRACTION,
+    EMERGENCY_EVASION_PATH_ATTRACTION,
     LIGHTNING_STORM_ANT_DAMAGE,
     LIGHTNING_STORM_TOWER_DAMAGE,
     LIGHTNING_STORM_TOWER_INTERVAL,
@@ -83,6 +85,7 @@ DEFAULT_MOVEMENT_POLICY = MOVEMENT_POLICY_ENHANCED
 WORKER_PATH_DAMAGE_WEIGHT = 0.20
 WORKER_PATH_CONTROL_WEIGHT = 1.80
 WORKER_PATH_TRAFFIC_WEIGHT = 0.75
+WORKER_PATH_EFFECT_WEIGHT = 0.35
 WORKER_RESERVATION_WEIGHT = 1.40
 WORKER_TOWER_CLAIM_WEIGHT = 1.00
 WORKER_BLOCKED_ATTACK_BONUS = 6.00
@@ -90,6 +93,7 @@ WORKER_ROUTE_IMPROVEMENT_EPS = 0.50
 COMBAT_PATH_DAMAGE_WEIGHT = 0.08
 COMBAT_PATH_CONTROL_WEIGHT = 0.45
 COMBAT_PATH_TRAFFIC_WEIGHT = 0.25
+COMBAT_PATH_EFFECT_WEIGHT = 0.20
 COMBAT_RESERVATION_WEIGHT = 0.45
 COMBAT_TOWER_CLAIM_WEIGHT = 0.85
 COMBAT_TRAVEL_COST_WEIGHT = 0.90
@@ -97,6 +101,7 @@ ATTACK_FINISH_BONUS = 3.00
 SURPLUS_HP_VALUE_WEIGHT = 0.15
 ENHANCED_COMBAT_ATTACK_EXECUTION_BONUS = 1.50
 WORKER_REROUTE_ATTACK_PENALTY_WEIGHT = 1.0
+MIN_PATH_STEP_COST = 0.15
 
 
 def _half_plane_delta(player: int, x: int, y: int) -> int:
@@ -182,6 +187,7 @@ class GameState:
     pheromone: np.ndarray = field(default_factory=lambda: np.zeros((PLAYER_COUNT, MAP_SIZE, MAP_SIZE), dtype=np.int32))
     damage_risk_field: np.ndarray = field(default_factory=lambda: np.zeros((PLAYER_COUNT, MAP_SIZE, MAP_SIZE), dtype=np.float32))
     control_risk_field: np.ndarray = field(default_factory=lambda: np.zeros((PLAYER_COUNT, MAP_SIZE, MAP_SIZE), dtype=np.float32))
+    effect_pull_field: np.ndarray = field(default_factory=lambda: np.zeros((PLAYER_COUNT, MAP_SIZE, MAP_SIZE), dtype=np.float32))
     weapon_cooldowns: np.ndarray = field(default_factory=lambda: np.zeros((PLAYER_COUNT, 5), dtype=np.int16))
     active_effects: list[WeaponEffect] = field(default_factory=list)
     old_count: list[int] = field(default_factory=lambda: [0, 0])
@@ -232,6 +238,7 @@ class GameState:
             pheromone=self.pheromone.copy(),
             damage_risk_field=self.damage_risk_field.copy(),
             control_risk_field=self.control_risk_field.copy(),
+            effect_pull_field=self.effect_pull_field.copy(),
             weapon_cooldowns=self.weapon_cooldowns.copy(),
             active_effects=[effect.clone() for effect in self.active_effects],
             old_count=list(self.old_count),
@@ -411,6 +418,7 @@ class GameState:
             return
         self.damage_risk_field.fill(0.0)
         self.control_risk_field.fill(0.0)
+        self.effect_pull_field.fill(0.0)
         for tower in self.towers:
             if tower.is_producer:
                 continue
@@ -429,6 +437,23 @@ class GameState:
                 self.damage_risk_field[threatened_player, x, y] += damage_value
                 if control_value > 0.0:
                     self.control_risk_field[threatened_player, x, y] += control_value
+        storm_damage = LIGHTNING_STORM_ANT_DAMAGE / DAMAGE_FIELD_HP_REFERENCE
+        for effect in self.active_effects:
+            if effect.weapon_type == SuperWeaponType.LIGHTNING_STORM:
+                threatened_player = 1 - effect.player
+                for x, y in WALKABLE_CELLS:
+                    if effect.in_range(x, y):
+                        self.damage_risk_field[threatened_player, x, y] += storm_damage
+                continue
+            if effect.weapon_type == SuperWeaponType.DEFLECTOR:
+                attraction = DEFLECTOR_PATH_ATTRACTION
+            elif effect.weapon_type == SuperWeaponType.EMERGENCY_EVASION:
+                attraction = EMERGENCY_EVASION_PATH_ATTRACTION
+            else:
+                continue
+            for x, y in WALKABLE_CELLS:
+                if effect.in_range(x, y):
+                    self.effect_pull_field[effect.player, x, y] += attraction
         self.risk_fields_dirty = False
 
     def _invalidate_enhanced_move_cache(self) -> None:
@@ -471,6 +496,7 @@ class GameState:
         damage_weight: float,
         control_weight: float,
         traffic_weight: float,
+        effect_weight: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         total = np.full((MAP_SIZE, MAP_SIZE), np.inf, dtype=np.float32)
         damage = np.full((MAP_SIZE, MAP_SIZE), np.inf, dtype=np.float32)
@@ -496,7 +522,15 @@ class GameState:
             step_damage = self._cell_damage_hp(player, x, y)
             step_control = float(self.control_risk_field[player, x, y])
             step_traffic = float(self.enhanced_traffic_field[player, x, y])
-            step_total = 1.0 + damage_weight * step_damage + control_weight * step_control + traffic_weight * step_traffic
+            step_effect = float(self.effect_pull_field[player, x, y])
+            step_total = max(
+                MIN_PATH_STEP_COST,
+                1.0
+                + damage_weight * step_damage
+                + control_weight * step_control
+                + traffic_weight * step_traffic
+                - effect_weight * step_effect,
+            )
 
             for _, px, py in neighbors(x, y):
                 if not _is_ant_walkable_cell(px, py):
@@ -524,6 +558,7 @@ class GameState:
                 damage_weight=WORKER_PATH_DAMAGE_WEIGHT,
                 control_weight=WORKER_PATH_CONTROL_WEIGHT,
                 traffic_weight=WORKER_PATH_TRAFFIC_WEIGHT,
+                effect_weight=WORKER_PATH_EFFECT_WEIGHT,
             )
             combat_total, _ = self._reverse_weighted_plan(
                 player,
@@ -531,6 +566,7 @@ class GameState:
                 damage_weight=COMBAT_PATH_DAMAGE_WEIGHT,
                 control_weight=COMBAT_PATH_CONTROL_WEIGHT,
                 traffic_weight=COMBAT_PATH_TRAFFIC_WEIGHT,
+                effect_weight=COMBAT_PATH_EFFECT_WEIGHT,
             )
             self.enhanced_worker_costs[player] = worker_total
             self.enhanced_combat_base_costs[player] = combat_total
@@ -548,6 +584,7 @@ class GameState:
                     damage_weight=COMBAT_PATH_DAMAGE_WEIGHT,
                     control_weight=COMBAT_PATH_CONTROL_WEIGHT,
                     traffic_weight=COMBAT_PATH_TRAFFIC_WEIGHT,
+                    effect_weight=COMBAT_PATH_EFFECT_WEIGHT,
                 )
                 plans[tower.tower_id] = EnhancedTowerPlan(total_cost=total_cost, damage_cost=damage_cost)
             self.enhanced_tower_plans[player] = plans
@@ -701,6 +738,7 @@ class GameState:
         target_y: int,
         damage_cost: float,
         control_cost: float,
+        effect_pull: float,
         tower_target: Tower | None = None,
     ) -> tuple[float, float]:
         weights = ant.move_weights
@@ -708,7 +746,7 @@ class GameState:
         pheromone = self._move_pheromone_score(ant, x, y)
         crowd = self._crowding_penalty(ant, x, y)
         tower_pull = self._tower_pull_score(ant, x, y, tower_target)
-        raw = progress + pheromone + tower_pull
+        raw = progress + pheromone + tower_pull + effect_pull
         total = (
             weights.progress * progress
             + weights.pheromone * pheromone
@@ -716,6 +754,7 @@ class GameState:
             - weights.expected_damage * damage_cost
             - weights.control_risk * control_cost
             + weights.tower_pull * tower_pull
+            + weights.effect_pull * effect_pull
         )
         return total, raw
 
@@ -970,6 +1009,7 @@ class GameState:
                     if ant.player == player and hex_distance(operation.arg0, operation.arg1, ant.x, ant.y) <= stats.attack_range:
                         ant.grant_evasion(2, grant_control_free_on_deplete=True)
             self.active_effects.append(WeaponEffect(weapon_type, player, operation.arg0, operation.arg1, stats.duration))
+            self._mark_risk_fields_dirty()
             return
         if operation.op_type == OperationType.UPGRADE_GENERATION_SPEED:
             self.bases[player].generation_level += 1
@@ -1019,7 +1059,7 @@ class GameState:
             for ant in self.ants:
                 if ant.player != effect.player and ant.is_alive() and effect.in_range(ant.x, ant.y):
                     ant.take_damage(LIGHTNING_STORM_ANT_DAMAGE)
-            if active_turn % LIGHTNING_STORM_TOWER_INTERVAL != 0:
+            if active_turn <= 0 or active_turn % LIGHTNING_STORM_TOWER_INTERVAL != 0:
                 continue
             destroyed_ids: set[int] = set()
             for tower in self.towers:
@@ -1178,6 +1218,7 @@ class GameState:
 
         damage_scores = self._directional_field_scores(ant, candidates, self.damage_risk_field)
         control_scores = self._directional_field_scores(ant, candidates, self.control_risk_field)
+        effect_scores = self._directional_field_scores(ant, candidates, self.effect_pull_field)
         if ant.control_immune:
             control_scores = [0.0] * len(control_scores)
 
@@ -1194,6 +1235,7 @@ class GameState:
                     target_y=ant.bewitch_target_y,
                     damage_cost=damage_scores[index],
                     control_cost=control_scores[index],
+                    effect_pull=effect_scores[index],
                     tower_target=tower_target,
                 )
                 scores.append(score + (4.0 if tower_target is not None else 0.0))
@@ -1212,6 +1254,7 @@ class GameState:
                 target_y=target_y,
                 damage_cost=damage_scores[index],
                 control_cost=control_scores[index],
+                effect_pull=effect_scores[index],
                 tower_target=tower_target,
             )
             weighted_scores.append(score)
@@ -1590,6 +1633,7 @@ class GameState:
             if effect.remaining_turns > 0 and effect.weapon_type != SuperWeaponType.EMERGENCY_EVASION:
                 next_effects.append(effect)
         self.active_effects = next_effects
+        self._mark_risk_fields_dirty()
 
     def _judge_timeout_winner(self) -> None:
         if self.bases[0].hp != self.bases[1].hp:
@@ -1740,6 +1784,7 @@ class GameState:
                 for effect_row in public_state.active_effects
                 if len(effect_row) >= 5
             ]
+            self._mark_risk_fields_dirty()
         if self.towers:
             self.next_tower_id = max(tower.tower_id for tower in self.towers) + 1
         else:

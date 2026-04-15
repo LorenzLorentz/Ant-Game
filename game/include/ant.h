@@ -37,6 +37,7 @@ class Ant {
         double expected_damage = 1.15;
         double control_risk = 0.85;
         double tower_pull = 0.0;
+        double effect_pull = 0.0;
     };
 
     std::vector<Pos> trail_cells;

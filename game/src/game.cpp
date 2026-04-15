@@ -38,6 +38,8 @@ constexpr double ANT_TELEPORT_RATIO = 0.1;
 constexpr int LIGHTNING_STORM_ANT_DAMAGE = 20;
 constexpr int LIGHTNING_STORM_TOWER_DAMAGE = 3;
 constexpr int LIGHTNING_STORM_TOWER_INTERVAL = 5;
+constexpr double DEFLECTOR_PATH_ATTRACTION = 1.0;
+constexpr double EMERGENCY_EVASION_PATH_ATTRACTION = 1.35;
 constexpr double STALL_MOVE_PENALTY = 0.35;
 constexpr double RETREAT_MOVE_PENALTY = 0.8;
 constexpr double TARGET_PULL_DISTANCE_SCALE = 0.18;
@@ -50,6 +52,7 @@ constexpr double WORKER_TOWER_TARGET_BONUS = 2.75;
 constexpr double WORKER_PATH_DAMAGE_WEIGHT = 0.20;
 constexpr double WORKER_PATH_CONTROL_WEIGHT = 1.80;
 constexpr double WORKER_PATH_TRAFFIC_WEIGHT = 0.75;
+constexpr double WORKER_PATH_EFFECT_WEIGHT = 0.35;
 constexpr double WORKER_RESERVATION_WEIGHT = 1.40;
 constexpr double WORKER_TOWER_CLAIM_WEIGHT = 1.00;
 constexpr double WORKER_BLOCKED_ATTACK_BONUS = 6.00;
@@ -57,11 +60,13 @@ constexpr double WORKER_ROUTE_IMPROVEMENT_EPS = 0.50;
 constexpr double COMBAT_PATH_DAMAGE_WEIGHT = 0.08;
 constexpr double COMBAT_PATH_CONTROL_WEIGHT = 0.45;
 constexpr double COMBAT_PATH_TRAFFIC_WEIGHT = 0.25;
+constexpr double COMBAT_PATH_EFFECT_WEIGHT = 0.20;
 constexpr double COMBAT_RESERVATION_WEIGHT = 0.45;
 constexpr double COMBAT_TOWER_CLAIM_WEIGHT = 0.85;
 constexpr double COMBAT_TRAVEL_COST_WEIGHT = 0.90;
 constexpr double ATTACK_FINISH_BONUS = 3.00;
 constexpr double SURPLUS_HP_VALUE_WEIGHT = 0.15;
+constexpr double MIN_PATH_STEP_COST = 0.15;
 constexpr double SPAWN_BEHAVIOR_PROBS[4] = {0.4, 0.35, 0.10, 0.15};
 struct SpawnProfile {
     Ant::Kind kind;
@@ -208,6 +213,7 @@ void Game::refresh_static_risk_fields() {
             for (int y = 0; y < MAP_SIZE; ++y) {
                 damage_risk_field[player][x][y] = 0.0;
                 control_risk_field[player][x][y] = 0.0;
+                effect_pull_field[player][x][y] = 0.0;
             }
 
     for (const auto &tower : defensive_towers) {
@@ -241,6 +247,37 @@ void Game::refresh_static_risk_fields() {
                 if (control_value > 0.0)
                     control_risk_field[threatened_player][x][y] += control_value;
             }
+    }
+    const double storm_damage =
+        static_cast<double>(LIGHTNING_STORM_ANT_DAMAGE) /
+        DAMAGE_FIELD_HP_REFERENCE;
+    for (int player = 0; player < 2; ++player) {
+        Item &storm = item[player][ItemType::LightingStorm];
+        if (storm.duration) {
+            for (int x = 0; x < MAP_SIZE; ++x)
+                for (int y = 0; y < MAP_SIZE; ++y)
+                    if (ant_can_walk_to(x, y) &&
+                        distance(Pos(x, y), Pos(storm.x, storm.y)) <= 3)
+                        damage_risk_field[!player][x][y] += storm_damage;
+        }
+        Item &deflect = item[player][ItemType::Deflectors];
+        if (deflect.duration) {
+            for (int x = 0; x < MAP_SIZE; ++x)
+                for (int y = 0; y < MAP_SIZE; ++y)
+                    if (ant_can_walk_to(x, y) &&
+                        distance(Pos(x, y), Pos(deflect.x, deflect.y)) <= 3)
+                        effect_pull_field[player][x][y] +=
+                            DEFLECTOR_PATH_ATTRACTION;
+        }
+        Item &evasion = item[player][ItemType::EmergencyEvasion];
+        if (evasion.duration) {
+            for (int x = 0; x < MAP_SIZE; ++x)
+                for (int y = 0; y < MAP_SIZE; ++y)
+                    if (ant_can_walk_to(x, y) &&
+                        distance(Pos(x, y), Pos(evasion.x, evasion.y)) <= 3)
+                        effect_pull_field[player][x][y] +=
+                            EMERGENCY_EVASION_PATH_ATTRACTION;
+        }
     }
     risk_fields_dirty = false;
 }
@@ -294,7 +331,8 @@ void Game::compute_enhanced_traffic_field() {
 
 Game::PathPlan Game::reverse_weighted_plan(
     int player, const std::vector<std::pair<int, int>> &sources,
-    double damage_weight, double control_weight, double traffic_weight) const {
+    double damage_weight, double control_weight, double traffic_weight,
+    double effect_weight) const {
     PathPlan plan;
     const double inf = std::numeric_limits<double>::infinity();
     for (int x = 0; x < MAP_SIZE; ++x)
@@ -329,10 +367,13 @@ Game::PathPlan Game::reverse_weighted_plan(
         double step_damage = cell_damage_hp(player, x, y);
         double step_control = control_risk_field[player][x][y];
         double step_traffic = enhanced_traffic_field[player][x][y];
-        double step_total =
+        double step_effect = effect_pull_field[player][x][y];
+        double step_total = std::max(
+            MIN_PATH_STEP_COST,
             1.0 + damage_weight * step_damage +
-            control_weight * step_control +
-            traffic_weight * step_traffic;
+                control_weight * step_control +
+                traffic_weight * step_traffic -
+                effect_weight * step_effect);
 
         for (int direction = 0; direction < 6; ++direction) {
             int px = x + ant_dx[y % 2][direction][0];
@@ -363,14 +404,16 @@ void Game::prepare_enhanced_move_cache(bool reset_reservations) {
               player ? PLAYER_0_BASE_CAMP_Y : PLAYER_1_BASE_CAMP_Y}},
             WORKER_PATH_DAMAGE_WEIGHT,
             WORKER_PATH_CONTROL_WEIGHT,
-            WORKER_PATH_TRAFFIC_WEIGHT);
+            WORKER_PATH_TRAFFIC_WEIGHT,
+            WORKER_PATH_EFFECT_WEIGHT);
         auto combat_base_plan = reverse_weighted_plan(
             player,
             {{player ? PLAYER_0_BASE_CAMP_X : PLAYER_1_BASE_CAMP_X,
               player ? PLAYER_0_BASE_CAMP_Y : PLAYER_1_BASE_CAMP_Y}},
             COMBAT_PATH_DAMAGE_WEIGHT,
             COMBAT_PATH_CONTROL_WEIGHT,
-            COMBAT_PATH_TRAFFIC_WEIGHT);
+            COMBAT_PATH_TRAFFIC_WEIGHT,
+            COMBAT_PATH_EFFECT_WEIGHT);
         enhanced_worker_costs[player] = worker_plan.total_cost;
         enhanced_combat_base_costs[player] = combat_base_plan.total_cost;
         enhanced_tower_plans[player].clear();
@@ -392,7 +435,8 @@ void Game::prepare_enhanced_move_cache(bool reset_reservations) {
                 player, sources,
                 COMBAT_PATH_DAMAGE_WEIGHT,
                 COMBAT_PATH_CONTROL_WEIGHT,
-                COMBAT_PATH_TRAFFIC_WEIGHT);
+                COMBAT_PATH_TRAFFIC_WEIGHT,
+                COMBAT_PATH_EFFECT_WEIGHT);
             enhanced_tower_plans[player].push_back(tower_plan);
         }
     }
@@ -824,6 +868,8 @@ int Game::choose_ant_move_legacy(const Ant &ant) {
         directional_field_scores(ant, candidates, damage_risk_field);
     std::vector<double> control_scores =
         directional_field_scores(ant, candidates, control_risk_field);
+    std::vector<double> effect_scores =
+        directional_field_scores(ant, candidates, effect_pull_field);
     if (ant.is_control_immune())
         std::fill(control_scores.begin(), control_scores.end(), 0.0);
 
@@ -858,9 +904,10 @@ int Game::choose_ant_move_legacy(const Ant &ant) {
                     control_scores[index] +
                 ant.move_weights.tower_pull *
                     tower_pull_score(ant, eval_x, eval_y, tower_target) +
+                ant.move_weights.effect_pull * effect_scores[index] +
                 (tower_target ? 4.0 : 0.0);
             scores.push_back(score);
-            raw_scores.push_back(score);
+            raw_scores.push_back(score + effect_scores[index]);
         }
     } else {
         for (const auto &candidate : candidates) {
@@ -873,7 +920,7 @@ int Game::choose_ant_move_legacy(const Ant &ant) {
             double progress = move_progress_score(ant, eval_x, eval_y, target);
             double pheromone = move_pheromone_score(ant, eval_x, eval_y);
             double tower_pull = tower_pull_score(ant, eval_x, eval_y, tower_target);
-            double raw = progress + pheromone + tower_pull;
+            double raw = progress + pheromone + tower_pull + effect_scores[index];
             raw_scores.push_back(raw);
             scores.push_back(
                 ant.move_weights.progress * progress +
@@ -881,7 +928,8 @@ int Game::choose_ant_move_legacy(const Ant &ant) {
                 ant.move_weights.crowding * crowding_penalty(ant, eval_x, eval_y) -
                 ant.move_weights.expected_damage * damage_scores[index] -
                 ant.move_weights.control_risk * control_scores[index] +
-                ant.move_weights.tower_pull * tower_pull);
+                ant.move_weights.tower_pull * tower_pull +
+                ant.move_weights.effect_pull * effect_scores[index]);
         }
     }
     if (ant.get_behavior() == Ant::Behavior::Conservative ||
@@ -1306,6 +1354,7 @@ void Game::update_items()
             if (it.cd != 0)
                 it.cd -= 1;
         }
+    mark_risk_fields_dirty();
 }
 bool Game::is_ended() { return is_end; }
 
@@ -2057,6 +2106,7 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
             else
                 player1.super_weapons_usage++;
             item[player][it] = Item(it, x, y);
+            mark_risk_fields_dirty();
 
             break;
         }
@@ -2095,6 +2145,7 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
             else
                 player1.super_weapons_usage++;
             item[player][it] = Item(it, x, y);
+            mark_risk_fields_dirty();
             break;
         }
         case Operation::Type::Deflectors:
@@ -2133,6 +2184,7 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
                 player0.super_weapons_usage++;
             else
                 player1.super_weapons_usage++;
+            mark_risk_fields_dirty();
 
             break;
         }
@@ -2179,6 +2231,7 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
                 }
             }
             item[player][it] = Item(it, x, y);
+            mark_risk_fields_dirty();
 
             break;
         }
