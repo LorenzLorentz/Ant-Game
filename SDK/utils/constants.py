@@ -167,7 +167,7 @@ TOWER_STATS = {
     TowerType.HEAVY: TowerStats(12, 2.0, 1, 15),
     TowerType.QUICK: TowerStats(6, 1.0, 1, 15),
     TowerType.MORTAR: TowerStats(12, 4.0, 2, 15),
-    TowerType.PRODUCER: TowerStats(0, 0.0, 0, 15, spawn_interval=8),
+    TowerType.PRODUCER: TowerStats(0, 0.0, 0, 15, spawn_interval=10),
     TowerType.HEAVY_PLUS: TowerStats(24, 2.0, 1, 15),
     TowerType.ICE: TowerStats(12, 2.0, 2, 15),
     TowerType.BEWITCH: TowerStats(14, 2.0, 2, 15),
@@ -177,9 +177,9 @@ TOWER_STATS = {
     TowerType.MORTAR_PLUS: TowerStats(18, 4.0, 2, 15),
     TowerType.PULSE: TowerStats(14, 4.0, 2, 15),
     TowerType.MISSILE: TowerStats(18, 6.0, 3, 15),
-    TowerType.PRODUCER_FAST: TowerStats(0, 0.0, 0, 15, spawn_interval=6),
-    TowerType.PRODUCER_SIEGE: TowerStats(0, 0.0, 0, 15, spawn_interval=8, siege_spawn_chance=0.25),
-    TowerType.PRODUCER_MEDIC: TowerStats(0, 0.0, 0, 15, spawn_interval=8, support_interval=4),
+    TowerType.PRODUCER_FAST: TowerStats(0, 0.0, 0, 15, spawn_interval=8),
+    TowerType.PRODUCER_SIEGE: TowerStats(0, 0.0, 0, 15, spawn_interval=10, siege_spawn_chance=0.25),
+    TowerType.PRODUCER_MEDIC: TowerStats(0, 0.0, 0, 15, spawn_interval=10, support_interval=4),
 }
 
 TOWER_UPGRADE_TREE = {

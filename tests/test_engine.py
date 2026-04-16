@@ -148,10 +148,10 @@ def test_tower_rebalance_stats_match_spec() -> None:
     assert Tower(0, 0, 6, 9, TowerType.PULSE).attack_range == 2
     assert Tower(0, 0, 6, 9, TowerType.MISSILE).damage == 18
     assert Tower(0, 0, 6, 9, TowerType.MISSILE).attack_range == 3
-    assert Tower(0, 0, 6, 9, TowerType.PRODUCER).stats.spawn_interval == 8
-    assert Tower(0, 0, 6, 9, TowerType.PRODUCER_FAST).stats.spawn_interval == 6
-    assert Tower(0, 0, 6, 9, TowerType.PRODUCER_SIEGE).stats.spawn_interval == 8
-    assert Tower(0, 0, 6, 9, TowerType.PRODUCER_MEDIC).stats.spawn_interval == 8
+    assert Tower(0, 0, 6, 9, TowerType.PRODUCER).stats.spawn_interval == 10
+    assert Tower(0, 0, 6, 9, TowerType.PRODUCER_FAST).stats.spawn_interval == 8
+    assert Tower(0, 0, 6, 9, TowerType.PRODUCER_SIEGE).stats.spawn_interval == 10
+    assert Tower(0, 0, 6, 9, TowerType.PRODUCER_MEDIC).stats.spawn_interval == 10
     assert Tower(0, 0, 6, 9, TowerType.PRODUCER_MEDIC).stats.support_interval == 4
 
 

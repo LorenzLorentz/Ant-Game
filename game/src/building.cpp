@@ -316,12 +316,12 @@ bool DefenseTower::is_producer() const {
 int DefenseTower::get_spawn_interval() const {
     switch (tower_type) {
     case TowerType::Producer:
-        return 8;
+        return 10;
     case TowerType::ProducerFast:
-        return 6;
+        return 8;
     case TowerType::ProducerSiege:
     case TowerType::ProducerMedic:
-        return 8;
+        return 10;
     default:
         return 0;
     }
