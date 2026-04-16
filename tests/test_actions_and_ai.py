@@ -221,6 +221,33 @@ def _native_position_after_advance(
     return (ant.x, ant.y, ant.hp)
 
 
+def _native_state_after_advance(
+    *,
+    seed: int,
+    movement_policy: str,
+    tower_rows: list[tuple[int, ...]],
+    ant_rows: list[tuple[int, ...]],
+    active_effects: list[tuple[int, ...]] | None = None,
+):
+    state = load_backend(prefer_native=True).initial_state(seed=seed, movement_policy=movement_policy)
+    public_state = state.to_public_round_state()
+    state.sync_public_round_state(
+        PublicRoundState(
+            round_index=1,
+            towers=tower_rows,
+            ants=ant_rows,
+            coins=public_state.coins,
+            camps_hp=public_state.camps_hp,
+            speed_lv=public_state.speed_lv,
+            anthp_lv=public_state.anthp_lv,
+            weapon_cooldowns=((0, 0, 0, 0), (0, 0, 0, 0)),
+            active_effects=active_effects or [],
+        )
+    )
+    state.advance_round()
+    return state
+
+
 def test_native_backend_can_boot_and_advance() -> None:
     state = load_backend(prefer_native=True).initial_state(seed=7)
     state.resolve_turn([], [])
@@ -374,6 +401,53 @@ def test_native_backend_pathfinding_prefers_deflector_and_evasion_zones() -> Non
             ant_row=enhanced_ant,
             active_effects=[(int(weapon_type), 0, center[0], center[1], duration)],
         ) == (4, 7, 20)
+
+
+def test_native_backend_enhanced_conservative_combat_ant_adjacent_tower_damages_it_without_moving() -> None:
+    state = _native_state_after_advance(
+        seed=0,
+        movement_policy="enhanced",
+        tower_rows=[(0, 1, 12, 9, int(TowerType.BASIC), 2, 10)],
+        ant_rows=[_native_ant_row(24, 0, 11, 9, hp=30, behavior=AntBehavior.CONSERVATIVE, kind=AntKind.COMBAT)],
+    )
+
+    tracked_ant = next(item for item in state.ants if item.ant_id == 24)
+    tracked_tower = next(item for item in state.towers if item.tower_id == 0)
+    assert (tracked_ant.x, tracked_ant.y) == (11, 9)
+    assert tracked_tower.hp == 5
+
+
+def test_native_backend_enhanced_conservative_worker_reroutes_around_single_avoidable_adjacent_tower() -> None:
+    state = _native_state_after_advance(
+        seed=0,
+        movement_policy="enhanced",
+        tower_rows=[(0, 1, 12, 9, int(TowerType.BASIC), 2, 10)],
+        ant_rows=[_native_ant_row(25, 0, 11, 8, behavior=AntBehavior.CONSERVATIVE, kind=AntKind.WORKER)],
+    )
+
+    tracked_ant = next(item for item in state.ants if item.ant_id == 25)
+    tracked_tower = next(item for item in state.towers if item.tower_id == 0)
+    assert (tracked_ant.x, tracked_ant.y) == (12, 8)
+    assert tracked_tower.hp == 10
+
+
+def test_native_backend_enhanced_conservative_low_hp_combat_ant_self_destructs_on_adjacent_tower_cluster() -> None:
+    state = _native_state_after_advance(
+        seed=4,
+        movement_policy="enhanced",
+        tower_rows=[
+            (0, 1, 14, 9, int(TowerType.BASIC), 2, 10),
+            (1, 1, 14, 10, int(TowerType.BASIC), 2, 12),
+        ],
+        ant_rows=[_native_ant_row(23, 0, 13, 10, hp=14, behavior=AntBehavior.CONSERVATIVE, kind=AntKind.COMBAT)],
+    )
+
+    assert state.die_count[0] == 1
+    assert all(item.ant_id != 23 for item in state.ants)
+    assert state.tower_by_id(0) is None
+    remaining = state.tower_by_id(1)
+    assert remaining is not None
+    assert remaining.hp == 2
 
 
 def test_random_runs_on_python_state_without_native_backend() -> None:

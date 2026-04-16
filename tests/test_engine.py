@@ -72,6 +72,45 @@ def _sample_adjacent_tower_attack_rate(
     return attacks / samples
 
 
+def _sample_adjacent_tower_attack_resolution_rate(
+    *,
+    seeds: int,
+    kind: AntKind,
+    behavior: AntBehavior,
+    movement_policy: str = MOVEMENT_POLICY_ENHANCED,
+) -> float:
+    tower_x, tower_y = 12, 9
+    attacks = 0
+    samples = 0
+    for _, ant_x, ant_y in neighbors(tower_x, tower_y):
+        if not is_path(ant_x, ant_y):
+            continue
+        for seed in range(seeds):
+            state = GameState.initial(seed=seed, movement_policy=movement_policy)
+            tower = Tower(0, 1, tower_x, tower_y, TowerType.BASIC, cooldown_clock=2.0, hp=10)
+            ant = Ant(
+                0,
+                0,
+                ant_x,
+                ant_y,
+                hp=30 if kind == AntKind.COMBAT else 20,
+                level=0,
+                kind=kind,
+                behavior=behavior,
+            )
+            state.towers.append(tower)
+            state.ants.append(ant)
+            start_pos = (ant.x, ant.y)
+            start_hp = tower.hp
+            state.advance_round()
+            tracked_ant = next((item for item in state.ants if item.ant_id == ant.ant_id), None)
+            tracked_tower = next((item for item in state.towers if item.tower_id == tower.tower_id), None)
+            tower_damaged = tracked_tower is None or tracked_tower.hp < start_hp
+            attacks += int(tracked_ant is not None and (tracked_ant.x, tracked_ant.y) == start_pos and tower_damaged)
+            samples += 1
+    return attacks / samples
+
+
 def test_initial_round_spawns_ants_and_advances_time() -> None:
     state = GameState.initial(seed=7)
     state.resolve_turn([], [])
@@ -570,6 +609,31 @@ def test_enhanced_default_worker_adjacent_single_tower_attack_rate_stays_low() -
     assert attack_rate <= 0.05
 
 
+def test_enhanced_default_combat_adjacent_tower_attack_rate_causes_real_tower_damage() -> None:
+    attack_rate = _sample_adjacent_tower_attack_resolution_rate(
+        seeds=120,
+        kind=AntKind.COMBAT,
+        behavior=AntBehavior.DEFAULT,
+    )
+
+    assert 0.76 <= attack_rate <= 0.84
+
+
+def test_enhanced_conservative_combat_ant_adjacent_tower_damages_it_without_moving() -> None:
+    state = GameState.initial(seed=0, movement_policy=MOVEMENT_POLICY_ENHANCED)
+    tower = Tower(0, 1, 12, 9, TowerType.BASIC, cooldown_clock=2.0, hp=10)
+    ant = Ant(24, 0, 11, 9, hp=30, level=0, kind=AntKind.COMBAT, behavior=AntBehavior.CONSERVATIVE)
+    state.towers.append(tower)
+    state.ants.append(ant)
+
+    state.advance_round()
+
+    tracked_ant = next(item for item in state.ants if item.ant_id == ant.ant_id)
+    tracked_tower = next(item for item in state.towers if item.tower_id == tower.tower_id)
+    assert (tracked_ant.x, tracked_ant.y) == (11, 9)
+    assert tracked_tower.hp == 5
+
+
 def test_enhanced_conservative_worker_prefers_reroute_when_single_tower_is_avoidable() -> None:
     state = GameState.initial(seed=0, movement_policy=MOVEMENT_POLICY_ENHANCED)
     ant = Ant(0, 0, 11, 8, hp=20, level=0, behavior=AntBehavior.CONSERVATIVE)
@@ -989,6 +1053,24 @@ def test_combat_ant_self_destruct_damages_target_and_neighboring_towers() -> Non
     direction = direction_between(ant.x, ant.y, target.x, target.y)
     state._resolve_ant_step(ant, direction)
     assert ant.hp <= 0
+    assert state.tower_by_id(target.tower_id) is None
+    remaining = state.tower_by_id(nearby.tower_id)
+    assert remaining is not None
+    assert remaining.hp == 2
+
+
+def test_enhanced_conservative_low_hp_combat_ant_self_destructs_on_adjacent_tower_cluster() -> None:
+    state = GameState.initial(seed=4, movement_policy=MOVEMENT_POLICY_ENHANCED)
+    target = Tower(0, 1, 14, 9, TowerType.BASIC, cooldown_clock=2.0, hp=10)
+    nearby = Tower(1, 1, 14, 10, TowerType.BASIC, cooldown_clock=2.0, hp=12)
+    ant = Ant(23, 0, 13, 10, hp=14, level=0, kind=AntKind.COMBAT, behavior=AntBehavior.CONSERVATIVE)
+    state.towers.extend([target, nearby])
+    state.ants.append(ant)
+
+    state.advance_round()
+
+    assert state.die_count[0] == 1
+    assert all(item.ant_id != ant.ant_id for item in state.ants)
     assert state.tower_by_id(target.tower_id) is None
     remaining = state.tower_by_id(nearby.tower_id)
     assert remaining is not None

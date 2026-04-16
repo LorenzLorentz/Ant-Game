@@ -6,6 +6,10 @@ from pathlib import Path
 import struct
 import subprocess
 
+from SDK.backend.engine import GameState
+from SDK.backend.model import Operation
+from SDK.utils.constants import OperationType
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GAME_DIR = REPO_ROOT / "game"
@@ -37,6 +41,159 @@ def _run_game(input_packets: bytes) -> subprocess.CompletedProcess[bytes]:
         stderr=subprocess.PIPE,
         check=False,
     )
+
+
+def _operations_text(operations: list[Operation]) -> str:
+    if not operations:
+        return "0\n"
+    lines = [str(len(operations))]
+    for operation in operations:
+        lines.append(" ".join(str(token) for token in operation.to_protocol_tokens()))
+    return "\n".join(lines) + "\n"
+
+
+def _run_game_replay(
+    *,
+    replay_path: Path,
+    seed: int,
+    movement_policy: str,
+    rounds0: list[list[Operation]],
+    rounds1: list[list[Operation]],
+) -> list[dict]:
+    packets = [
+        _packet(
+            {
+                "player_list": [1, 1],
+                "player_num": 2,
+                "config": {"random_seed": seed, "movement_policy": movement_policy},
+                "replay": str(replay_path),
+            }
+        )
+    ]
+    round_count = max(len(rounds0), len(rounds1))
+    for round_index in range(round_count):
+        packets.append(
+            _packet(
+                {
+                    "player": 0,
+                    "content": _prefixed_text_packet(
+                        _operations_text(rounds0[round_index] if round_index < len(rounds0) else [])
+                    ),
+                    "time": 0,
+                }
+            )
+        )
+        packets.append(
+            _packet(
+                {
+                    "player": 1,
+                    "content": _prefixed_text_packet(
+                        _operations_text(rounds1[round_index] if round_index < len(rounds1) else [])
+                    ),
+                    "time": 0,
+                }
+            )
+        )
+    packets.append(
+        _packet(
+            {
+                "player": -1,
+                "content": json.dumps({"player": 0, "error": 0}),
+                "time": 0,
+            }
+        )
+    )
+
+    completed = _run_game(b"".join(packets))
+    stderr = completed.stderr.decode("utf-8", errors="replace")
+    assert completed.returncode == 0
+    assert "read from judger error" not in stderr
+    return json.loads(replay_path.read_text())
+
+
+def _cpp_tower_hp_by_round(replay: list[dict], *, x: int, y: int, player: int) -> list[int | None]:
+    towers_by_id: dict[int, dict] = {}
+    hp_by_round: list[int | None] = []
+    for entry in replay:
+        for tower in entry.get("round_state", {}).get("towers", []):
+            if tower["type"] == -1:
+                towers_by_id.pop(int(tower["id"]), None)
+                continue
+            towers_by_id[int(tower["id"])] = tower
+        hp = None
+        for tower in towers_by_id.values():
+            if (
+                int(tower["player"]) == player
+                and int(tower["pos"]["x"]) == x
+                and int(tower["pos"]["y"]) == y
+            ):
+                hp = int(tower["hp"])
+                break
+        hp_by_round.append(hp)
+    return hp_by_round
+
+
+def _cpp_player_ant_snapshots(replay: list[dict], *, player: int) -> list[dict[int, tuple[int, int, int, int, int]]]:
+    snapshots: list[dict[int, tuple[int, int, int, int, int]]] = []
+    for entry in replay:
+        ants = {
+            int(ant["id"]): (
+                int(ant["pos"]["x"]),
+                int(ant["pos"]["y"]),
+                int(ant["kind"]),
+                int(ant["behavior"]),
+                int(ant["hp"]),
+            )
+            for ant in entry.get("round_state", {}).get("ants", [])
+            if int(ant["player"]) == player
+        }
+        snapshots.append(ants)
+    return snapshots
+
+
+def _python_round_snapshots(
+    *,
+    seed: int,
+    movement_policy: str,
+    rounds0: list[list[Operation]],
+    rounds1: list[list[Operation]],
+    tower_x: int,
+    tower_y: int,
+    tower_player: int,
+    ant_player: int,
+) -> tuple[list[int | None], list[dict[int, tuple[int, int, int, int, int]]]]:
+    state = GameState.initial(seed=seed, movement_policy=movement_policy)
+    round_count = max(len(rounds0), len(rounds1))
+    tower_hp_by_round: list[int | None] = []
+    ant_snapshots: list[dict[int, tuple[int, int, int, int, int]]] = []
+    for round_index in range(round_count):
+        state.resolve_turn(
+            rounds0[round_index] if round_index < len(rounds0) else [],
+            rounds1[round_index] if round_index < len(rounds1) else [],
+        )
+        tower = next(
+            (
+                item
+                for item in state.towers
+                if item.player == tower_player and item.x == tower_x and item.y == tower_y
+            ),
+            None,
+        )
+        tower_hp_by_round.append(None if tower is None else int(tower.hp))
+        ant_snapshots.append(
+            {
+                ant.ant_id: (
+                    int(ant.x),
+                    int(ant.y),
+                    int(ant.kind),
+                    int(ant.behavior),
+                    int(ant.hp),
+                )
+                for ant in state.ants
+                if ant.player == ant_player
+            }
+        )
+    return tower_hp_by_round, ant_snapshots
 
 
 def test_cpp_game_accepts_null_random_seed(tmp_path: Path) -> None:
@@ -145,3 +302,63 @@ def test_cpp_game_decodes_length_prefixed_ai_operations(tmp_path: Path) -> None:
     assert all("weaponCooldowns" in entry.get("round_state", {}) for entry in replay)
     assert all("activeEffects" in entry.get("round_state", {}) for entry in replay)
     assert all("pheromone" in entry.get("round_state", {}) for entry in replay)
+
+
+def test_cpp_game_worker_tower_pressure_matches_python_on_frontline_basic_tower(tmp_path: Path) -> None:
+    rounds = 10
+    rounds0 = [[] for _ in range(rounds)]
+    rounds1 = [[Operation(OperationType.BUILD_TOWER, 12, 9)]] + [[] for _ in range(rounds - 1)]
+
+    replay = _run_game_replay(
+        replay_path=tmp_path / "worker-frontline-tower-replay.json",
+        seed=62,
+        movement_policy="enhanced",
+        rounds0=rounds0,
+        rounds1=rounds1,
+    )
+    cpp_tower_hp = _cpp_tower_hp_by_round(replay[:rounds], x=12, y=9, player=1)
+    cpp_ants = _cpp_player_ant_snapshots(replay[:rounds], player=0)
+    py_tower_hp, py_ants = _python_round_snapshots(
+        seed=62,
+        movement_policy="enhanced",
+        rounds0=rounds0,
+        rounds1=rounds1,
+        tower_x=12,
+        tower_y=9,
+        tower_player=1,
+        ant_player=0,
+    )
+
+    for round_index in (0, 1, 2, 3, 9):
+        assert cpp_tower_hp[round_index] == py_tower_hp[round_index]
+        assert cpp_ants[round_index][0] == py_ants[round_index][0]
+
+
+def test_cpp_game_combat_tower_attack_matches_python_on_frontline_basic_tower(tmp_path: Path) -> None:
+    rounds = 18
+    rounds0 = [[] for _ in range(rounds)]
+    rounds1 = [[Operation(OperationType.BUILD_TOWER, 12, 9)]] + [[] for _ in range(rounds - 1)]
+
+    replay = _run_game_replay(
+        replay_path=tmp_path / "combat-frontline-tower-replay.json",
+        seed=126,
+        movement_policy="enhanced",
+        rounds0=rounds0,
+        rounds1=rounds1,
+    )
+    cpp_tower_hp = _cpp_tower_hp_by_round(replay[:rounds], x=12, y=9, player=1)
+    cpp_ants = _cpp_player_ant_snapshots(replay[:rounds], player=0)
+    py_tower_hp, py_ants = _python_round_snapshots(
+        seed=126,
+        movement_policy="enhanced",
+        rounds0=rounds0,
+        rounds1=rounds1,
+        tower_x=12,
+        tower_y=9,
+        tower_player=1,
+        ant_player=0,
+    )
+
+    for round_index in (14, 15, 16, 17):
+        assert cpp_tower_hp[round_index] == py_tower_hp[round_index]
+        assert cpp_ants[round_index][2] == py_ants[round_index][2]

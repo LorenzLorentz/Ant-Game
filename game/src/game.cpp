@@ -66,6 +66,8 @@ constexpr double COMBAT_TOWER_CLAIM_WEIGHT = 0.85;
 constexpr double COMBAT_TRAVEL_COST_WEIGHT = 0.90;
 constexpr double ATTACK_FINISH_BONUS = 3.00;
 constexpr double SURPLUS_HP_VALUE_WEIGHT = 0.15;
+constexpr double ENHANCED_COMBAT_ATTACK_EXECUTION_BONUS = 1.50;
+constexpr double WORKER_REROUTE_ATTACK_PENALTY_WEIGHT = 1.0;
 constexpr double MIN_PATH_STEP_COST = 0.15;
 constexpr double SPAWN_BEHAVIOR_PROBS[4] = {0.4, 0.35, 0.10, 0.15};
 struct SpawnProfile {
@@ -595,7 +597,7 @@ std::vector<double> Game::directional_field_scores(
 }
 
 DefenseTower *Game::enemy_tower_at(int player, int x, int y) {
-    if (!map.is_valid(x, y))
+    if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE)
         return nullptr;
     DefenseTower *tower = map.map[x][y].tower;
     if (tower == nullptr || tower->destroy() || tower->get_player() == player)
@@ -604,7 +606,7 @@ DefenseTower *Game::enemy_tower_at(int player, int x, int y) {
 }
 
 const DefenseTower *Game::enemy_tower_at(int player, int x, int y) const {
-    if (!map.is_valid(x, y))
+    if (x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE)
         return nullptr;
     const DefenseTower *tower = map.map[x][y].tower;
     if (tower == nullptr || tower->destroy() || tower->get_player() == player)
@@ -994,6 +996,9 @@ int Game::choose_ant_move_enhanced(const Ant &ant) {
                 std::min(best_walk_remaining,
                          enhanced_worker_costs[ant.get_player()][nx][ny]);
         }
+        double reroute_gain = 0.0;
+        if (std::isfinite(current_cost) && std::isfinite(best_walk_remaining))
+            reroute_gain = std::max(0.0, current_cost - best_walk_remaining);
         bool blocked =
             !std::isfinite(best_walk_remaining) || !std::isfinite(current_cost) ||
             (current_cost - best_walk_remaining <= WORKER_ROUTE_IMPROVEMENT_EPS);
@@ -1012,6 +1017,8 @@ int Game::choose_ant_move_enhanced(const Ant &ant) {
                     score += ATTACK_FINISH_BONUS;
                 if (blocked)
                     score += WORKER_BLOCKED_ATTACK_BONUS;
+                else
+                    score -= WORKER_REROUTE_ATTACK_PENALTY_WEIGHT * reroute_gain;
                 auto claim_it =
                     enhanced_tower_claims[ant.get_player()].find(tower_target->get_id());
                 if (claim_it != enhanced_tower_claims[ant.get_player()].end())
@@ -1051,6 +1058,7 @@ int Game::choose_ant_move_enhanced(const Ant &ant) {
             int best_tower_id = -1;
             if (tower_target != nullptr) {
                 score = tower_attack_value(ant, *tower_target, ant.get_hp());
+                score += ENHANCED_COMBAT_ATTACK_EXECUTION_BONUS;
                 auto claim_it =
                     enhanced_tower_claims[ant.get_player()].find(tower_target->get_id());
                 if (claim_it != enhanced_tower_claims[ant.get_player()].end())
