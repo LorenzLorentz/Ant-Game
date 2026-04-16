@@ -59,13 +59,17 @@ def _run_game_replay(
     movement_policy: str,
     rounds0: list[list[Operation]],
     rounds1: list[list[Operation]],
+    extra_config: dict[str, object] | None = None,
 ) -> list[dict]:
+    config: dict[str, object] = {"random_seed": seed, "movement_policy": movement_policy}
+    if extra_config:
+        config.update(extra_config)
     packets = [
         _packet(
             {
                 "player_list": [1, 1],
                 "player_num": 2,
-                "config": {"random_seed": seed, "movement_policy": movement_policy},
+                "config": config,
                 "replay": str(replay_path),
             }
         )
@@ -109,6 +113,31 @@ def _run_game_replay(
     assert completed.returncode == 0
     assert "read from judger error" not in stderr
     return json.loads(replay_path.read_text())
+
+
+def _operation_from_replay_json(raw: dict) -> Operation:
+    op_type = OperationType(int(raw["type"]))
+    if op_type in (
+        OperationType.BUILD_TOWER,
+        OperationType.USE_LIGHTNING_STORM,
+        OperationType.USE_EMP_BLASTER,
+        OperationType.USE_DEFLECTOR,
+        OperationType.USE_EMERGENCY_EVASION,
+    ):
+        return Operation(op_type, int(raw["pos"]["x"]), int(raw["pos"]["y"]))
+    if op_type == OperationType.UPGRADE_TOWER:
+        return Operation(op_type, int(raw["id"]), int(raw["args"]))
+    if op_type == OperationType.DOWNGRADE_TOWER:
+        return Operation(op_type, int(raw["id"]))
+    return Operation(op_type)
+
+
+def _round_operations_from_replay(path: Path, *, player: int) -> tuple[int, list[list[Operation]]]:
+    replay = json.loads(path.read_text())
+    return int(replay[0]["seed"]), [
+        [_operation_from_replay_json(raw) for raw in entry.get(f"op{player}", [])]
+        for entry in replay
+    ]
 
 
 def _cpp_tower_hp_by_round(replay: list[dict], *, x: int, y: int, player: int) -> list[int | None]:
@@ -302,6 +331,59 @@ def test_cpp_game_decodes_length_prefixed_ai_operations(tmp_path: Path) -> None:
     assert all("weaponCooldowns" in entry.get("round_state", {}) for entry in replay)
     assert all("activeEffects" in entry.get("round_state", {}) for entry in replay)
     assert all("pheromone" in entry.get("round_state", {}) for entry in replay)
+
+
+def test_cpp_game_rule_illegal_remains_fatal_by_default(tmp_path: Path) -> None:
+    replay = _run_game_replay(
+        replay_path=tmp_path / "strict-rule-illegal-replay.json",
+        seed=11,
+        movement_policy="enhanced",
+        rounds0=[[]],
+        rounds1=[[Operation(OperationType.BUILD_TOWER, 6, 9)]],
+    )
+
+    assert any("IA" in str(entry.get("round_state", {}).get("message", "")) for entry in replay)
+    assert any(
+        "TowerBuild" in str(entry.get("round_state", {}).get("error", ""))
+        for entry in replay
+    )
+
+
+def test_cpp_game_can_cold_handle_rule_illegal_when_enabled(tmp_path: Path) -> None:
+    replay = _run_game_replay(
+        replay_path=tmp_path / "soft-rule-illegal-replay.json",
+        seed=11,
+        movement_policy="enhanced",
+        rounds0=[[]],
+        rounds1=[[Operation(OperationType.BUILD_TOWER, 6, 9)]],
+        extra_config={"cold_handle_rule_illegal": True},
+    )
+
+    assert replay[0]["round_state"]["winner"] == -1
+    assert "IA" not in str(replay[0]["round_state"].get("message", ""))
+    assert "ignored" in str(replay[0]["round_state"].get("error", ""))
+
+
+def test_cpp_game_replays_official_sample2_without_ia_after_active_tower_pricing_fix(tmp_path: Path) -> None:
+    sample_path = REPO_ROOT / "sample2.json"
+    seed0, rounds0 = _round_operations_from_replay(sample_path, player=0)
+    seed1, rounds1 = _round_operations_from_replay(sample_path, player=1)
+
+    assert seed0 == seed1
+    replay = _run_game_replay(
+        replay_path=tmp_path / "sample2-regression-replay.json",
+        seed=seed0,
+        movement_policy="enhanced",
+        rounds0=rounds0,
+        rounds1=rounds1,
+    )
+
+    first_25_rounds = replay[:25]
+    assert all("IA" not in str(entry.get("round_state", {}).get("message", "")) for entry in first_25_rounds)
+    assert any(
+        tower["player"] == 1 and tower["pos"]["x"] == 10 and tower["pos"]["y"] == 11 and tower["type"] == 0
+        for tower in first_25_rounds[-1]["round_state"].get("towers", [])
+    )
 
 
 def test_cpp_game_worker_tower_pressure_matches_python_on_frontline_basic_tower(tmp_path: Path) -> None:

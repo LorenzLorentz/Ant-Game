@@ -105,7 +105,8 @@ std::string movement_policy_name(Game::MovementPolicy policy) {
 }
 
 void init_game(Game &game, unsigned long long seed,
-               Game::MovementPolicy movement_policy) {
+               Game::MovementPolicy movement_policy,
+               bool cold_handle_rule_illegal) {
     game.is_end = false;
     game.winner = -1;
     game.round = 0;
@@ -115,6 +116,7 @@ void init_game(Game &game, unsigned long long seed,
     game.err_msg.clear();
     game.random_seed = seed;
     game.movement_policy = movement_policy;
+    game.cold_handle_rule_illegal = cold_handle_rule_illegal;
     game.enhanced_move_phase_active = false;
     game.enhanced_move_cache_dirty = true;
     game.rng_state = seed & ((1ULL << 48) - 1);
@@ -258,12 +260,16 @@ struct NativeState {
     bool terminal = false;
     int winner = -1;
     unsigned long long seed = 0;
+    bool cold_handle_rule_illegal = false;
     std::array<int, 2> old_count = {0, 0};
 
     explicit NativeState(unsigned long long init_seed,
-                         const std::string &movement_policy_name_in = "enhanced")
-        : seed(init_seed) {
-        init_game(game, seed, parse_movement_policy_name(movement_policy_name_in));
+                         const std::string &movement_policy_name_in = "enhanced",
+                         bool cold_handle_rule_illegal_in = false)
+        : seed(init_seed),
+          cold_handle_rule_illegal(cold_handle_rule_illegal_in) {
+        init_game(game, seed, parse_movement_policy_name(movement_policy_name_in),
+                  cold_handle_rule_illegal);
     }
 
     NativeState clone() const {
@@ -310,16 +316,33 @@ struct NativeState {
         for (const auto &operation : operations) {
             if ((operation.type == 12 || operation.type == 13) && used_towers.find(operation.arg0) != used_towers.end()) {
                 illegal.push_back(operation);
+                if (!cold_handle_rule_illegal) {
+                    game.is_end = true;
+                    game.winner = 1 - player_id;
+                    break;
+                }
                 continue;
             }
             if (is_base_upgrade_operation(operation.type) && base_upgraded) {
                 illegal.push_back(operation);
+                if (!cold_handle_rule_illegal) {
+                    game.is_end = true;
+                    game.winner = 1 - player_id;
+                    break;
+                }
                 continue;
             }
             const int pending_tower_id = game.tower_id;
             std::string err_msg;
-            if (!game.apply_operation(std::vector<::Operation>{to_game_operation(operation)}, player_id, err_msg)) {
+            Game::OperationErrorKind error_kind = Game::OperationErrorKind::None;
+            if (!game.apply_operation(std::vector<::Operation>{to_game_operation(operation)}, player_id, err_msg, &error_kind)) {
                 illegal.push_back(operation);
+                if (error_kind == Game::OperationErrorKind::Protocol ||
+                    !cold_handle_rule_illegal) {
+                    game.is_end = true;
+                    game.winner = 1 - player_id;
+                    break;
+                }
                 continue;
             }
             if (operation.type == 11)
@@ -334,6 +357,13 @@ struct NativeState {
     }
 
     py::dict advance_round() {
+        if (game.is_end) {
+            sync_terminal(game, terminal, winner);
+            py::dict out;
+            out["terminal"] = terminal;
+            out["winner"] = winner;
+            return out;
+        }
         game.next_round();
         sync_terminal(game, terminal, winner);
         py::dict out;
@@ -344,8 +374,16 @@ struct NativeState {
 
     py::dict resolve_turn(const std::vector<BoundOperation> &ops0, const std::vector<BoundOperation> &ops1) {
         auto illegal0 = apply_operation_list(0, ops0);
-        auto illegal1 = apply_operation_list(1, ops1);
-        auto out = advance_round();
+        std::vector<BoundOperation> illegal1;
+        if (!game.is_end)
+            illegal1 = apply_operation_list(1, ops1);
+        py::dict out;
+        if (!game.is_end)
+            out = advance_round();
+        else
+            sync_terminal(game, terminal, winner);
+        out["terminal"] = terminal;
+        out["winner"] = winner;
         out["illegal0"] = illegal0;
         out["illegal1"] = illegal1;
         return out;
@@ -526,13 +564,15 @@ PYBIND11_MODULE(native_antwar, m) {
         .def_readwrite("arg1", &BoundOperation::arg1);
 
     py::class_<NativeState>(m, "NativeState")
-        .def(py::init<unsigned long long, const std::string &>(),
+        .def(py::init<unsigned long long, const std::string &, bool>(),
              py::arg("seed"),
-             py::arg("movement_policy") = "enhanced")
+             py::arg("movement_policy") = "enhanced",
+             py::arg("cold_handle_rule_illegal") = false)
         .def("clone", &NativeState::clone)
         .def_readwrite("terminal", &NativeState::terminal)
         .def_readwrite("winner", &NativeState::winner)
         .def_readonly("seed", &NativeState::seed)
+        .def_readonly("cold_handle_rule_illegal", &NativeState::cold_handle_rule_illegal)
         .def_property_readonly("movement_policy", &NativeState::movement_policy_name_view)
         .def("round_index", &NativeState::round_index)
         .def("coins", &NativeState::coins)

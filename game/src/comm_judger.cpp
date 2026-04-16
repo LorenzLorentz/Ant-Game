@@ -121,6 +121,12 @@ std::vector<Operation> from_judger_round::get_op_list() {
     return from_player_json;
 }
 
+void from_judger_round::set_operation_list(
+    const std::vector<Operation> &operations) {
+    from_player_json = operations;
+    op_json_to_oj();
+}
+
 /* if another player is ai, send oj operation; if
    another player is human, send json operation */
 void from_judger_round::send_operation(bool is_ai) {

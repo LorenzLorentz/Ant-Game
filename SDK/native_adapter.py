@@ -20,13 +20,18 @@ def _to_python_operation(operation: native_antwar.Operation) -> Operation:
 
 
 def _build_shadow_state(native: native_antwar.NativeState) -> GameState:
-    state = GameState.initial(seed=int(native.seed), movement_policy=str(native.movement_policy))
+    state = GameState.initial(
+        seed=int(native.seed),
+        movement_policy=str(native.movement_policy),
+        cold_handle_rule_illegal=bool(native.cold_handle_rule_illegal),
+    )
     _sync_shadow_state(state, native)
     return state
 
 
 def _sync_shadow_state(state: GameState, native: native_antwar.NativeState) -> None:
     state.movement_policy = str(native.movement_policy)
+    state.cold_handle_rule_illegal = bool(native.cold_handle_rule_illegal)
     state.round_index = int(native.round_index())
     state.coins = list(native.coins())
     native_old_count = list(native.old_count())
@@ -119,8 +124,13 @@ class NativeGameStateAdapter:
         self._refresh_cache()
 
     @classmethod
-    def initial(cls, seed: int = 0, movement_policy: str = DEFAULT_MOVEMENT_POLICY) -> NativeGameStateAdapter:
-        return cls(native_antwar.NativeState(seed, movement_policy))
+    def initial(
+        cls,
+        seed: int = 0,
+        movement_policy: str = DEFAULT_MOVEMENT_POLICY,
+        cold_handle_rule_illegal: bool = False,
+    ) -> NativeGameStateAdapter:
+        return cls(native_antwar.NativeState(seed, movement_policy, cold_handle_rule_illegal))
 
     def __getattr__(self, name: str):
         return getattr(self._shadow, name)
@@ -149,8 +159,11 @@ class NativeGameStateAdapter:
         return [_to_python_operation(operation) for operation in illegal]
 
     def apply_operation(self, player: int, operation: Operation) -> None:
-        self.native.apply_operation_list(player, [_to_native_operation(operation)])
-        self._shadow.apply_operation(player, operation)
+        illegal = self.native.apply_operation_list(player, [_to_native_operation(operation)])
+        if illegal:
+            self._shadow.apply_operation_list(player, [operation])
+        else:
+            self._shadow.apply_operation(player, operation)
         self._refresh_cache()
 
     def operation_income(self, player: int, operation: Operation, tower_count_hint: int | None = None) -> int:

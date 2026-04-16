@@ -179,6 +179,7 @@ class EnhancedMoveAnnotation:
 class GameState:
     seed: int = 0
     movement_policy: str = DEFAULT_MOVEMENT_POLICY
+    cold_handle_rule_illegal: bool = False
     round_index: int = 0
     towers: list[Tower] = field(default_factory=list)
     ants: list[Ant] = field(default_factory=list)
@@ -219,8 +220,17 @@ class GameState:
     enhanced_move_annotations: dict[int, EnhancedMoveAnnotation] = field(default_factory=dict)
 
     @classmethod
-    def initial(cls, seed: int = 0, movement_policy: str = DEFAULT_MOVEMENT_POLICY) -> GameState:
-        state = cls(seed=seed, movement_policy=movement_policy)
+    def initial(
+        cls,
+        seed: int = 0,
+        movement_policy: str = DEFAULT_MOVEMENT_POLICY,
+        cold_handle_rule_illegal: bool = False,
+    ) -> GameState:
+        state = cls(
+            seed=seed,
+            movement_policy=movement_policy,
+            cold_handle_rule_illegal=cold_handle_rule_illegal,
+        )
         state.bases = [Base(0, *PLAYER_BASES[0], hp=BASE_HP), Base(1, *PLAYER_BASES[1], hp=BASE_HP)]
         state._init_pheromone(seed)
         state.rng_state = (seed ^ RNG_MULTIPLIER) & RNG_MASK
@@ -230,6 +240,7 @@ class GameState:
         return GameState(
             seed=self.seed,
             movement_policy=self.movement_policy,
+            cold_handle_rule_illegal=self.cold_handle_rule_illegal,
             round_index=self.round_index,
             towers=[tower.clone() for tower in self.towers],
             ants=[ant.clone() for ant in self.ants],
@@ -1027,6 +1038,10 @@ class GameState:
                 accepted.append(operation)
             else:
                 illegal.append(operation)
+                if not self.cold_handle_rule_illegal:
+                    self.terminal = True
+                    self.winner = 1 - player
+                    break
         return illegal
 
     def _prepare_ants_for_attack(self) -> None:
@@ -1674,9 +1689,14 @@ class GameState:
             self._judge_base_camps()
 
     def resolve_turn(self, operations0: Iterable[Operation], operations1: Iterable[Operation]) -> TurnResolution:
+        operations0 = list(operations0)
+        operations1 = list(operations1)
         illegal0 = self.apply_operation_list(0, operations0)
-        illegal1 = self.apply_operation_list(1, operations1)
-        self.advance_round()
+        illegal1: list[Operation] = []
+        if not self.terminal:
+            illegal1 = self.apply_operation_list(1, operations1)
+        if not self.terminal:
+            self.advance_round()
         return TurnResolution((list(operations0), list(operations1)), (illegal0, illegal1), self.terminal, self.winner)
 
     def to_public_round_state(self) -> PublicRoundState:

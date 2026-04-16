@@ -131,6 +131,40 @@ Game::MovementPolicy parse_movement_policy(const json &config) {
     return Game::MovementPolicy::Enhanced;
 }
 
+bool parse_cold_handle_rule_illegal(const json &config) {
+    if (!config.contains("cold_handle_rule_illegal") ||
+        !config["cold_handle_rule_illegal"].is_boolean()) {
+        return false;
+    }
+    return config["cold_handle_rule_illegal"].get<bool>();
+}
+
+bool is_base_upgrade_operation(Operation::Type type) {
+    return type == Operation::Type::BarrackUpgrade ||
+           type == Operation::Type::AntUpgrade;
+}
+
+void append_error_message(std::string &target, const std::string &message) {
+    if (message.empty())
+        return;
+    if (!target.empty())
+        target += " | ";
+    target += message;
+}
+
+void append_illegal_summary(std::string &target, int player,
+                            const std::vector<std::string> &messages) {
+    if (messages.empty())
+        return;
+    std::string summary = "P" + std::to_string(player) + " ignored " +
+                          std::to_string(messages.size()) + " illegal ops";
+    if (!messages.front().empty())
+        summary += ": " + messages.front();
+    if (messages.size() > 1)
+        summary += " ...";
+    append_error_message(target, summary);
+}
+
 bool lightning_storm_tower_strike_turn(int remaining_duration) {
     int active_turn = get_item_time(ItemType::LightingStorm) - remaining_duration + 1;
     return active_turn > 0 && active_turn % LIGHTNING_STORM_TOWER_INTERVAL == 0;
@@ -1290,6 +1324,7 @@ void Game::init()
 
     json config = judger_init.get_config();
     movement_policy = parse_movement_policy(config);
+    cold_handle_rule_illegal = parse_cold_handle_rule_illegal(config);
     if (config.contains("random_seed") && config["random_seed"].is_number_unsigned())
     {
         random_seed = config["random_seed"].get<unsigned long long>();
@@ -1890,10 +1925,27 @@ void Game::update_pheromone()
     }
 }
 
+int Game::tower_count_for_player(int player) const {
+    int count = 0;
+    for (const auto &tower : defensive_towers) {
+        if (!tower.destroy() && tower.get_player() == player)
+            count++;
+    }
+    return count;
+}
+
 bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
-                           std::string &err_msg)
+                           std::string &err_msg,
+                           Game::OperationErrorKind *error_kind)
 {
-    op[player] = op_list;
+    if (error_kind != nullptr)
+        *error_kind = OperationErrorKind::None;
+    auto fail = [&](OperationErrorKind kind, const std::string &message) {
+        err_msg = message;
+        if (error_kind != nullptr)
+            *error_kind = kind;
+        return false;
+    };
     bool camp_upgraded_flag = false;
     std::vector<int> used_tower;
     for (auto &op : op_list)
@@ -1912,8 +1964,7 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
             {
                 char msg[100];
                 sprintf(msg, "TowerBuild: position out of range (at %d, %d)", x, y);
-                err_msg = msg;
-                return false;
+                return fail(OperationErrorKind::Rule, msg);
             }
             if (map.map[x][y].base_camp != nullptr)
             {
@@ -1921,8 +1972,7 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
                 ;
                 sprintf(msg, "TowerBuild: attempt to build a tower (at %d, %d), in which there is already a camp. (player id = %d)",
                         x, y, map.map[x][y].player);
-                err_msg = msg;
-                return false;
+                return fail(OperationErrorKind::Rule, msg);
             }
             if (map.map[x][y].tower != nullptr)
             {
@@ -1930,39 +1980,39 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
                 ;
                 sprintf(msg, "TowerBuild: attempt to build a tower (at %d, %d), in which there is already a tower. (player id = %d)",
                         x, y, map.map[x][y].player);
-                err_msg = msg;
-                return false;
+                return fail(OperationErrorKind::Rule, msg);
             }
             if (map.map[x][y].player != player)
             {
                 char msg[100];
                 ;
                 sprintf(msg, "TowerBuild: Build a tower at position (%d, %d), its player is %d, request player = %d", x, y, map.map[x][y].player, player);
-                err_msg = msg;
-                return false;
+                return fail(OperationErrorKind::Rule, msg);
             }
+            const int active_tower_count = tower_count_for_player(player);
             if (player == 1 &&
-                !player1.coin.isEnough_tower_build())
+                !player1.coin.isEnough_tower_build(active_tower_count))
             { // not enough money
-                err_msg = "TowerBuild: P1 not enough money";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerBuild: P1 not enough money");
             }
-            if (player == 0 && !player0.coin.isEnough_tower_build())
+            if (player == 0 &&
+                !player0.coin.isEnough_tower_build(active_tower_count))
             {
-                err_msg = "TowerBuild: P0 not enough money";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerBuild: P0 not enough money");
             }
             Item it = item[!player][ItemType::EMPBlaster];
             if (it.duration && distance(Pos(x, y), Pos(it.x, it.y)) <= 3)
             {
-                err_msg = "TowerBuild: EMPBlaster is active";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerBuild: EMPBlaster is active");
             }
 
             if (player == 1)
-                player1.coin.cost_tower_build();
+                player1.coin.cost_tower_build(active_tower_count);
             else
-                player0.coin.cost_tower_build();
+                player0.coin.cost_tower_build(active_tower_count);
 
             used_tower.push_back(tower_id);
             defensive_towers.push_back(DefenseTower{x, y, player, tower_id, 0});
@@ -1980,44 +2030,45 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
             if (id < 0 || id >= (int)defensive_towers.size() ||
                 defensive_towers[id].destroy()|| defensive_towers[id].get_player() != player)
             {
-                err_msg = "TowerUpgrade: Invalid Tower id";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerUpgrade: Invalid Tower id");
             }
             if (std::find(used_tower.begin(), used_tower.end(), id) !=
                 used_tower.end())
             {
-                err_msg = "TowerUpgrade: Tower has been used";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerUpgrade: Tower has been used");
             }
+            DefenseTower &tower = defensive_towers[id];
             Item it = item[!player][ItemType::EMPBlaster];
-            if (it.duration && distance(Pos(x, y), Pos(it.x, it.y)) <= 3)
+            if (it.duration &&
+                distance(Pos(tower.get_x(), tower.get_y()), Pos(it.x, it.y)) <= 3)
             {
-                err_msg = "TowerUpgrade: EMPBlaster is active";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerUpgrade: EMPBlaster is active");
             }
 
-            DefenseTower &tower = defensive_towers[id];
             if (tower.get_level() ==
                 TOWER_MAX_LEVEL)
             { // have reached max level
-                err_msg = "TowerUpgrade: Tower has reached max level";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerUpgrade: Tower has reached max level");
             }
             if (player == 1 && !player1.coin.isEnough_tower_upgrade(
                                    tower))
             { // not enough money
-                err_msg = "TowerUpgrade: P1 not enough money";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerUpgrade: P1 not enough money");
             }
             if (player == 0 && !player0.coin.isEnough_tower_upgrade(tower))
             {
-                err_msg = "TowerUpgrade: P0 not enough money";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerUpgrade: P0 not enough money");
             }
             if (!tower.upgrade_type_check(op.get_args()))
             {
-                err_msg = "TowerUpgrade: Invalid upgrade type";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerUpgrade: Invalid upgrade type");
             }
 
             used_tower.push_back(id);
@@ -2038,26 +2089,31 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
             if (id < 0 || id >= (int)defensive_towers.size() ||
                 defensive_towers[id].destroy() || defensive_towers[id].get_player() != player)
             {
-                err_msg = "TowerDestroy: Invalid Tower id";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerDestroy: Invalid Tower id");
             }
             if (std::find(used_tower.begin(), used_tower.end(), id) !=
                 used_tower.end())
             {
-                err_msg = "TowerDestroy: Tower has been used";
-                return false;
-            }
-            Item it = item[!player][ItemType::EMPBlaster];
-            if (it.duration && distance(Pos(x, y), Pos(it.x, it.y)) <= 3)
-            {
-                err_msg = "TowerDestroy: EMPBlaster is active";
-                return false;
+                return fail(OperationErrorKind::Rule,
+                            "TowerDestroy: Tower has been used");
             }
             DefenseTower *defensive_tower = &defensive_towers[id];
+            Item it = item[!player][ItemType::EMPBlaster];
+            if (it.duration &&
+                distance(Pos(defensive_tower->get_x(), defensive_tower->get_y()),
+                         Pos(it.x, it.y)) <= 3)
+            {
+                return fail(OperationErrorKind::Rule,
+                            "TowerDestroy: EMPBlaster is active");
+            }
+            const int active_tower_count = tower_count_for_player(player);
             if (player == 1)
-                player1.coin.income_tower_destroy(*defensive_tower);
+                player1.coin.income_tower_destroy(*defensive_tower,
+                                                  active_tower_count);
             else
-                player0.coin.income_tower_destroy(*defensive_tower);
+                player0.coin.income_tower_destroy(*defensive_tower,
+                                                  active_tower_count);
 
             if (defensive_tower->get_type() == TowerType::Basic)
             {
@@ -2344,7 +2400,8 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
         //         player0.coin.set_coin(100000);
         //     break;
         default:
-            return false;
+            return fail(OperationErrorKind::Protocol,
+                        "Operation: undefined operation type");
         }
     }
     return true;
@@ -2536,6 +2593,12 @@ bool Game::round_read_from_judger(int player)
     }
     else
     {
+        if (player == 0)
+        {
+            err_msg.clear();
+            op[0].clear();
+            op[1].clear();
+        }
         judger_round_info.transfer_op(output_to_judger.if_ai(player));
 
         if (judger_round_info.get_player() != player)
@@ -2548,10 +2611,69 @@ bool Game::round_read_from_judger(int player)
         int another_player = 1 - player;
 
         std::vector<Operation> op_list = judger_round_info.get_op_list();
-        if (!apply_operation(op_list, player, err_msg))
+        if (!cold_handle_rule_illegal)
         {
-            set_AI_state_IO(player);
-            return false;
+            op[player] = op_list;
+            if (!apply_operation(op_list, player, err_msg))
+            {
+                set_AI_state_IO(player);
+                return false;
+            }
+        }
+        else
+        {
+            std::vector<Operation> accepted_ops;
+            std::vector<int> used_tower;
+            std::vector<std::string> ignored_errors;
+            bool camp_upgraded_flag = false;
+            for (const auto &operation : op_list)
+            {
+                const auto type = operation.get_operation_type();
+                if ((type == Operation::Type::TowerUpgrade ||
+                     type == Operation::Type::TowerDestroy) &&
+                    std::find(used_tower.begin(), used_tower.end(),
+                              operation.get_id()) != used_tower.end())
+                {
+                    ignored_errors.push_back(
+                        type == Operation::Type::TowerUpgrade
+                            ? "TowerUpgrade: Tower has been used"
+                            : "TowerDestroy: Tower has been used");
+                    continue;
+                }
+                if (is_base_upgrade_operation(type) && camp_upgraded_flag)
+                {
+                    ignored_errors.push_back(
+                        "BarrackUpgrade: already upgraded this tern");
+                    continue;
+                }
+                const int pending_tower_id = tower_id;
+                std::string operation_error;
+                OperationErrorKind error_kind = OperationErrorKind::None;
+                if (!apply_operation(std::vector<Operation>{operation}, player,
+                                     operation_error, &error_kind))
+                {
+                    if (error_kind == OperationErrorKind::Protocol)
+                    {
+                        op[player] = op_list;
+                        err_msg = operation_error;
+                        set_AI_state_IO(player);
+                        return false;
+                    }
+                    ignored_errors.push_back(operation_error);
+                    continue;
+                }
+                accepted_ops.push_back(operation);
+                if (type == Operation::Type::TowerBuild)
+                    used_tower.push_back(pending_tower_id);
+                else if (type == Operation::Type::TowerUpgrade ||
+                         type == Operation::Type::TowerDestroy)
+                    used_tower.push_back(operation.get_id());
+                if (is_base_upgrade_operation(type))
+                    camp_upgraded_flag = true;
+            }
+            op[player] = accepted_ops;
+            judger_round_info.set_operation_list(accepted_ops);
+            append_illegal_summary(err_msg, player, ignored_errors);
         }
 
         judger_round_info.send_operation(

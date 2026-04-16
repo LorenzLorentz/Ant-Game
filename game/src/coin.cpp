@@ -8,16 +8,14 @@ constexpr int INITIAL_COIN = 50, INITIAL_TOWER_BUILD_PRICE = 15,
               INITIAL_PENALTY = 0;
 constexpr int COMBAT_KILL_REWARD = 18;
 
-int next_tower_build_price(int current_price) {
-    if (current_price % 2 == 0)
-        return (current_price / 2) * 3;
-    return current_price * 2;
-}
-
-int previous_tower_build_price(int current_price) {
-    if (current_price % 2 == 0)
-        return current_price / 2;
-    return (current_price / 3) * 2;
+int tower_build_cost_for_count(int tower_count) {
+    tower_count = std::max(tower_count, 0);
+    int cost = INITIAL_TOWER_BUILD_PRICE;
+    for (int index = 0; index < tower_count / 2; ++index)
+        cost *= 3;
+    if (tower_count % 2 == 1)
+        cost *= 2;
+    return cost;
 }
 
 Coin::Coin()
@@ -50,12 +48,15 @@ void Coin::income_ant_arrive() {
     coin += 10;
 }
 
-bool Coin::isEnough_tower_build() const { return coin >= tower_building_price; }
 constexpr int LEVEL1_PRICE = 60, LEVEL2_PRICE = 200;
-void Coin::income_tower_destroy(const DefenseTower &tower) {
+bool Coin::isEnough_tower_build(int tower_count) const {
+    return coin >= tower_build_cost_for_count(tower_count);
+}
+
+void Coin::income_tower_destroy(const DefenseTower &tower, int tower_count) {
     switch (tower.get_level()) {
     case 0: // level 0 -> -1
-        tower_building_price = previous_tower_build_price(tower_building_price);
+        tower_building_price = tower_build_cost_for_count(tower_count - 1);
         coin += static_cast<int>(
             (9LL * tower_building_price * std::max(tower.get_hp(), 0)) /
             (10LL * std::max(tower.get_hp_limit(), 1)));
@@ -84,9 +85,10 @@ bool Coin::isEnough_tower_upgrade(const DefenseTower &tower) const {
     }
 }
 
-void Coin::cost_tower_build() {
-    coin -= tower_building_price;
-    tower_building_price = next_tower_build_price(tower_building_price);
+void Coin::cost_tower_build(int tower_count) {
+    const int current_cost = tower_build_cost_for_count(tower_count);
+    coin -= current_cost;
+    tower_building_price = tower_build_cost_for_count(tower_count + 1);
 }
 
 void Coin::cost_tower_upgrade(const DefenseTower &tower) {

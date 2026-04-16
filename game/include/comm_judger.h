@@ -48,6 +48,7 @@ class from_judger_round {
     const std::string &get_content() const { return content; }
     int get_time() const { return time; }
     void transfer_op(bool is_ai);
+    void set_operation_list(const std::vector<Operation> &operations);
     void send_operation(bool is_ai);
     std::vector<Operation> get_op_list();
 };

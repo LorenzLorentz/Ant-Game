@@ -358,6 +358,36 @@ def test_native_backend_uses_updated_lightning_storm_cost_cooldown_and_duration(
     assert effect.remaining_turns == 15
 
 
+def test_native_backend_can_make_rule_illegal_fatal_when_cold_handling_is_disabled() -> None:
+    state = load_backend(prefer_native=True).initial_state(
+        seed=30,
+        cold_handle_rule_illegal=False,
+    )
+    invalid = Operation(OperationType.BUILD_TOWER, 12, 9)
+
+    illegal = state.apply_operation_list(0, [invalid])
+
+    assert illegal == [invalid]
+    assert state.terminal is True
+    assert state.winner == 1
+    assert state.towers == []
+
+
+def test_native_backend_can_skip_rule_illegal_when_cold_handling_is_enabled() -> None:
+    state = load_backend(prefer_native=True).initial_state(
+        seed=31,
+        cold_handle_rule_illegal=True,
+    )
+    invalid = Operation(OperationType.BUILD_TOWER, 12, 9)
+
+    illegal = state.apply_operation_list(0, [invalid])
+
+    assert illegal == [invalid]
+    assert state.terminal is False
+    assert state.winner is None
+    assert state.towers == []
+
+
 def test_native_backend_pathfinding_avoids_lightning_storm_under_both_policies() -> None:
     legacy_ant = _native_ant_row(1, 0, 1, 7)
     assert _native_position_after_advance(movement_policy="legacy", ant_row=legacy_ant) == (0, 8, 20)

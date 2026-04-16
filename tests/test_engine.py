@@ -225,6 +225,34 @@ def test_build_and_upgrade_tower_updates_coin_and_state() -> None:
     assert state.coins[0] == 40
 
 
+def test_strict_rule_illegal_mode_marks_offending_player_as_loser() -> None:
+    state = GameState.initial(seed=31, cold_handle_rule_illegal=False)
+    invalid = Operation(OperationType.BUILD_TOWER, 12, 9)
+
+    resolution = state.resolve_turn([invalid], [])
+
+    assert resolution.illegal[0] == [invalid]
+    assert resolution.illegal[1] == []
+    assert state.terminal is True
+    assert state.winner == 1
+    assert state.round_index == 0
+    assert state.towers == []
+
+
+def test_cold_rule_illegal_mode_can_skip_invalid_operation_without_ending_match() -> None:
+    state = GameState.initial(seed=32, cold_handle_rule_illegal=True)
+    invalid = Operation(OperationType.BUILD_TOWER, 12, 9)
+
+    resolution = state.resolve_turn([invalid], [])
+
+    assert resolution.illegal[0] == [invalid]
+    assert resolution.illegal[1] == []
+    assert state.terminal is False
+    assert state.winner is None
+    assert state.round_index == 1
+    assert state.towers == []
+
+
 def test_max_level_base_upgrade_returns_zero_income_without_crashing() -> None:
     state = GameState.initial(seed=12)
     state.bases[0].generation_level = 2

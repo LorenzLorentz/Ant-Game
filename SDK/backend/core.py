@@ -10,15 +10,29 @@ from SDK.backend.state import BackendState, PythonBackendState
 class EngineBackend(Protocol):
     name: str
 
-    def initial_state(self, seed: int = 0, movement_policy: str = DEFAULT_MOVEMENT_POLICY) -> BackendState: ...
+    def initial_state(
+        self,
+        seed: int = 0,
+        movement_policy: str = DEFAULT_MOVEMENT_POLICY,
+        cold_handle_rule_illegal: bool = False,
+    ) -> BackendState: ...
 
 
 @dataclass(slots=True)
 class PythonBackend:
     name: str = "python"
 
-    def initial_state(self, seed: int = 0, movement_policy: str = DEFAULT_MOVEMENT_POLICY) -> BackendState:
-        return PythonBackendState.initial(seed=seed, movement_policy=movement_policy)
+    def initial_state(
+        self,
+        seed: int = 0,
+        movement_policy: str = DEFAULT_MOVEMENT_POLICY,
+        cold_handle_rule_illegal: bool = False,
+    ) -> BackendState:
+        return PythonBackendState.initial(
+            seed=seed,
+            movement_policy=movement_policy,
+            cold_handle_rule_illegal=cold_handle_rule_illegal,
+        )
 
 
 class NativeBackendUnavailable(RuntimeError):
@@ -30,10 +44,19 @@ class NativeBackend:
     module: object
     name: str = "native"
 
-    def initial_state(self, seed: int = 0, movement_policy: str = DEFAULT_MOVEMENT_POLICY) -> BackendState:
+    def initial_state(
+        self,
+        seed: int = 0,
+        movement_policy: str = DEFAULT_MOVEMENT_POLICY,
+        cold_handle_rule_illegal: bool = False,
+    ) -> BackendState:
         from SDK.native_adapter import NativeGameStateAdapter
 
-        return NativeGameStateAdapter.initial(seed, movement_policy=movement_policy)
+        return NativeGameStateAdapter.initial(
+            seed,
+            movement_policy=movement_policy,
+            cold_handle_rule_illegal=cold_handle_rule_illegal,
+        )
 
 
 def load_backend(prefer_native: bool = False) -> EngineBackend:

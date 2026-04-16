@@ -36,16 +36,16 @@ class Coin {
     // income from different sources
     void
     income_ant_kill(const Ant &); // income when killing one ant successfully
-    void income_tower_destroy(const DefenseTower &); // income when destroying or downgrading one tower
+    void income_tower_destroy(const DefenseTower &, int tower_count); // income when destroying or downgrading one tower
     void income_ant_arrive(); // income when ant arriving at the camp
     // judge if coin is enough in following conditions
-    bool isEnough_tower_build()
+    bool isEnough_tower_build(int tower_count)
         const; // cost when building one tower; return if coin is enough
     bool isEnough_tower_upgrade(const DefenseTower &)
         const; // cost when upgrading one tower; return if coin is enough
 
     // cost due to different reasons, it will change coin
-    void cost_tower_build();
+    void cost_tower_build(int tower_count);
     void cost_tower_upgrade(const DefenseTower &);
 
     bool isEnough_base_camp_upgrade(const int &) const ;

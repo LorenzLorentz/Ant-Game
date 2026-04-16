@@ -25,6 +25,12 @@ class Game {
         Enhanced,
     };
 
+    enum class OperationErrorKind {
+        None,
+        Rule,
+        Protocol,
+    };
+
   private:
     using RiskField = multi_dim_array_t<double, 2, MAP_SIZE, MAP_SIZE>;
     using ScalarField = multi_dim_array_t<double, MAP_SIZE, MAP_SIZE>;
@@ -75,6 +81,7 @@ class Game {
     RiskField effect_pull_field{};
     bool risk_fields_dirty = true;
     MovementPolicy movement_policy = MovementPolicy::Enhanced;
+    bool cold_handle_rule_illegal = false;
     bool enhanced_move_phase_active = false;
     bool enhanced_move_cache_dirty = true;
     std::array<ScalarField, 2> enhanced_worker_costs{};
@@ -154,6 +161,7 @@ class Game {
     void maybe_control_free(Ant &ant, bool was_active, bool is_active);
     void prepare_ants_for_attack();
     void damage_ant_by_tower(DefenseTower &tower, Ant &ant);
+    int tower_count_for_player(int player) const;
 
   public:
     Game();
@@ -167,7 +175,8 @@ class Game {
 
     // bool is_operation_valid(const OperationSet& op) const;
     bool apply_operation(const std::vector<Operation> &op_list,
-                         int player, std::string& err_msg); // 进行选手在回合的操作
+                         int player, std::string &err_msg,
+                         OperationErrorKind *error_kind = nullptr); // 进行选手在回合的操作
     void dump_round_state(/* const std::string& filename */);
     void
     dump_last_round(/* const std::string& filename */ const std::string &msg);

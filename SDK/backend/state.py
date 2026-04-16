@@ -12,6 +12,7 @@ from SDK.backend.model import Ant, Base, Operation, Tower, WeaponEffect
 class BackendState(Protocol):
     seed: int
     movement_policy: str
+    cold_handle_rule_illegal: bool
     round_index: int
     terminal: bool
     winner: int | None
@@ -74,8 +75,19 @@ class PythonBackendState:
         self._state = state
 
     @classmethod
-    def initial(cls, seed: int = 0, movement_policy: str = DEFAULT_MOVEMENT_POLICY) -> PythonBackendState:
-        return cls(GameState.initial(seed=seed, movement_policy=movement_policy))
+    def initial(
+        cls,
+        seed: int = 0,
+        movement_policy: str = DEFAULT_MOVEMENT_POLICY,
+        cold_handle_rule_illegal: bool = False,
+    ) -> PythonBackendState:
+        return cls(
+            GameState.initial(
+                seed=seed,
+                movement_policy=movement_policy,
+                cold_handle_rule_illegal=cold_handle_rule_illegal,
+            )
+        )
 
     @property
     def seed(self) -> int:
@@ -124,6 +136,10 @@ class PythonBackendState:
     @property
     def movement_policy(self) -> str:
         return self._state.movement_policy
+
+    @property
+    def cold_handle_rule_illegal(self) -> bool:
+        return self._state.cold_handle_rule_illegal
 
     @property
     def pheromone(self) -> np.ndarray:
@@ -261,8 +277,8 @@ class PythonBackendState:
         return self._state.slot_priority(player, x, y)
 
 
-def create_python_backend_state(seed: int = 0) -> BackendState:
-    return PythonBackendState.initial(seed=seed)
+def create_python_backend_state(seed: int = 0, cold_handle_rule_illegal: bool = False) -> BackendState:
+    return PythonBackendState.initial(seed=seed, cold_handle_rule_illegal=cold_handle_rule_illegal)
 
 
 __all__ = [
