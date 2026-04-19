@@ -23,6 +23,7 @@ from SDK.utils.constants import (
 )
 from SDK.utils.geometry import hex_distance
 from SDK.backend.state import BackendState
+from SDK.utils.turns import DecisionContext
 
 
 @dataclass(slots=True)
@@ -85,7 +86,13 @@ class FeatureExtractor:
             penalty += 20.0
         return float(-penalty / math.sqrt(max(len(towers), 1)))
 
-    def summarize(self, state: BackendState, player: int) -> StateFeatures:
+    def summarize(
+        self,
+        state: BackendState,
+        player: int,
+        context: DecisionContext | None = None,
+    ) -> StateFeatures:
+        del context
         enemy = 1 - player
         my_towers = state.towers_of(player)
         enemy_towers = state.towers_of(enemy)
@@ -205,9 +212,16 @@ class FeatureExtractor:
                         board[channel, x, y] = max(board[channel, x, y], strength)
         return board
 
-    def encode_stats(self, state: BackendState, player: int) -> np.ndarray:
+    def encode_stats(
+        self,
+        state: BackendState,
+        player: int,
+        context: DecisionContext | None = None,
+    ) -> np.ndarray:
+        if context is None:
+            context = DecisionContext.for_player(player)
         enemy = 1 - player
-        features = self.summarize(state, player).values
+        features = self.summarize(state, player, context=context).values
         extras = np.array(
             [
                 state.coins[player] / 300.0,
@@ -232,15 +246,29 @@ class FeatureExtractor:
                 / SUPER_WEAPON_STATS[SuperWeaponType.EMERGENCY_EVASION].cooldown,
                 state.super_weapon_usage[player] / 16.0,
                 state.super_weapon_usage[enemy] / 16.0,
+                float(player == 0),
+                float(player == 1),
+                float(context.to_play == 0),
+                float(context.to_play == 1),
+                float(context.settles_after_action),
+                float(context.opponent_already_acted),
             ],
             dtype=np.float32,
         )
         return np.concatenate([features, extras], dtype=np.float32)
 
-    def encode_observation(self, state: BackendState, player: int, action_mask: np.ndarray) -> dict[str, np.ndarray]:
+    def encode_observation(
+        self,
+        state: BackendState,
+        player: int,
+        action_mask: np.ndarray,
+        context: DecisionContext | None = None,
+    ) -> dict[str, np.ndarray]:
+        if context is None:
+            context = DecisionContext.for_player(player)
         return {
             "board": self.encode_board(state, player),
-            "stats": self.encode_stats(state, player),
+            "stats": self.encode_stats(state, player, context=context),
             "action_mask": action_mask.astype(np.int8, copy=False),
         }
 
@@ -249,8 +277,13 @@ class FeatureExtractor:
         stats = observation["stats"].reshape(-1)
         return np.concatenate([board, stats], dtype=np.float32)
 
-    def evaluate(self, state: BackendState, player: int) -> float:
-        summary = self.summarize(state, player).named
+    def evaluate(
+        self,
+        state: BackendState,
+        player: int,
+        context: DecisionContext | None = None,
+    ) -> float:
+        summary = self.summarize(state, player, context=context).named
         value = 0.0
         value += summary["hp_delta"] * 15.0
         value += summary["coin_ratio"] * 2.5

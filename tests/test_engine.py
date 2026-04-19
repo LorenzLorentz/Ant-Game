@@ -813,6 +813,44 @@ def test_lightning_storm_damages_enemy_worker_and_combat_ants() -> None:
     assert ants[3].hp == 20
 
 
+def test_lightning_storm_triggers_immediately_when_deployed() -> None:
+    state = GameState.initial(seed=13)
+    state.ants = [
+        Ant(1, 1, 9, 9, hp=25, level=1),
+        Ant(2, 1, 10, 9, hp=30, level=0, kind=AntKind.COMBAT),
+    ]
+
+    state.apply_operation(0, Operation(OperationType.USE_LIGHTNING_STORM, 9, 9))
+
+    ants = {ant.ant_id: ant for ant in state.ants}
+    assert ants[1].hp == 5
+    assert ants[2].hp == 10
+    assert len(state.active_effects) == 1
+    assert state.active_effects[0].last_trigger_round == 0
+
+
+def test_lightning_storm_consumes_evasion_shield_before_hp() -> None:
+    state = GameState.initial(seed=16)
+    ant = Ant(1, 1, 9, 9, hp=25, level=1)
+    ant.grant_evasion(2, grant_control_free_on_deplete=True)
+    state.ants = [ant]
+
+    state.apply_operation(0, Operation(OperationType.USE_LIGHTNING_STORM, 9, 9))
+
+    assert state.ants[0].hp == 25
+    assert state.ants[0].shield == 1
+
+
+def test_new_lightning_storm_does_not_double_tick_in_same_round() -> None:
+    state = GameState.initial(seed=15)
+    state.ants = [Ant(1, 1, 9, 9, hp=25, level=1)]
+
+    state.apply_operation(0, Operation(OperationType.USE_LIGHTNING_STORM, 9, 9))
+    state._apply_lightning_storm()
+
+    assert state.ants[0].hp == 5
+
+
 def test_lightning_storm_only_hits_enemy_towers_on_every_fifth_active_turn() -> None:
     state = GameState.initial(seed=14)
     state.towers = [
@@ -829,6 +867,7 @@ def test_lightning_storm_only_hits_enemy_towers_on_every_fifth_active_turn() -> 
     assert towers[3].hp == 15
 
     state.active_effects[0].remaining_turns = 11
+    state.active_effects[0].last_trigger_round = -1
     state._apply_lightning_storm()
     towers = {tower.tower_id: tower for tower in state.towers}
     assert towers[1].hp == 12

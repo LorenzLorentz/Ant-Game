@@ -235,7 +235,7 @@ void DefenseTower::set_stats_for_type(TowerType tower_type_) {
     case TowerType::ProducerMedic:
         damage = 0;
         spd = 4;
-        range = 4;
+        range = 0;
         hp_limit = 15;
         break;
     default:

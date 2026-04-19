@@ -11,6 +11,7 @@ from SDK.backend import create_python_backend_state
 from SDK.backend.state import BackendState
 from SDK.utils.actions import ActionBundle, ActionCatalog
 from SDK.utils.features import FeatureExtractor
+from SDK.utils.turns import DecisionContext
 
 
 def _relu(values: np.ndarray) -> np.ndarray:
@@ -109,7 +110,7 @@ class SearchResult:
 @dataclass(slots=True)
 class SearchNode:
     state: BackendState
-    player: int
+    context: DecisionContext
     prior: float = 0.0
     bundle: ActionBundle | None = None
     action_index: int = 0
@@ -126,6 +127,10 @@ class SearchNode:
         if self.visits == 0:
             return 0.0
         return self.value_sum / self.visits
+
+    @property
+    def to_play(self) -> int:
+        return self.context.to_play
 
 
 class PolicyValueNet:
@@ -303,24 +308,30 @@ class PriorGuidedMCTS:
     def action_dim(self) -> int:
         return self.action_catalog.max_actions
 
-    def _heuristic_value(self, state: BackendState, player: int) -> float:
+    def _heuristic_value(
+        self,
+        state: BackendState,
+        player: int,
+        context: DecisionContext | None = None,
+    ) -> float:
         terminal = _terminal_value(state, player)
         if terminal is not None:
             return terminal
-        raw = self.feature_extractor.evaluate(state, player)
+        raw = self.feature_extractor.evaluate(state, player, context=context)
         return float(np.tanh(raw / self.search_config.value_scale))
 
     def _blend_policy_value(
         self,
         state: BackendState,
         player: int,
+        context: DecisionContext,
         bundles: list[ActionBundle],
     ) -> PolicyValueInference:
         action_mask = self.action_catalog.action_mask(bundles).astype(np.float32)
-        observation = self.feature_extractor.encode_observation(state, player, action_mask)
+        observation = self.feature_extractor.encode_observation(state, player, action_mask, context=context)
         flat = self.feature_extractor.flatten_observation(observation)
         heuristic_priors = _heuristic_bundle_policy(bundles)
-        heuristic_value = self._heuristic_value(state, player)
+        heuristic_value = self._heuristic_value(state, player, context=context)
         if self.model is None:
             blended_priors = heuristic_priors
             blended_value = heuristic_value
@@ -342,20 +353,16 @@ class PriorGuidedMCTS:
             mask=action_mask,
         )
 
-    def _predict_policy_only(self, state: BackendState, player: int, bundles: list[ActionBundle]) -> np.ndarray:
+    def _predict_policy_only(
+        self,
+        state: BackendState,
+        player: int,
+        context: DecisionContext,
+        bundles: list[ActionBundle],
+    ) -> np.ndarray:
         if not bundles:
             return np.zeros(self.action_dim, dtype=np.float32)
-        return self._blend_policy_value(state, player, bundles).priors
-
-    def _predict_enemy_bundle(self, state: BackendState, player: int) -> ActionBundle:
-        enemy = 1 - player
-        enemy_bundles = self.action_catalog.build(state, enemy)
-        if not enemy_bundles:
-            fallback = self.action_catalog.build(state, player)
-            return fallback[0]
-        priors = self._predict_policy_only(state, enemy, enemy_bundles)[: len(enemy_bundles)]
-        best_index = int(np.argmax(priors))
-        return enemy_bundles[best_index]
+        return self._blend_policy_value(state, player, context, bundles).priors
 
     def _branch_indices(self, priors: np.ndarray, bundles: list[ActionBundle], limit: int) -> list[int]:
         if not bundles:
@@ -372,22 +379,24 @@ class PriorGuidedMCTS:
         node: SearchNode,
         bundles: list[ActionBundle] | None = None,
         add_root_noise: bool = False,
+        max_decision_depth: int | None = None,
     ) -> float:
         if node.expanded:
             return node.mean_value
 
-        terminal = _terminal_value(node.state, node.player)
+        terminal = _terminal_value(node.state, node.to_play)
         if terminal is not None:
             node.expanded = True
             return terminal
 
-        action_bundles = bundles or self.action_catalog.build(node.state, node.player)
+        action_bundles = bundles or self.action_catalog.build(node.state, node.to_play, node.context, rerank=False)
         node.bundles = action_bundles
-        inference = self._blend_policy_value(node.state, node.player, action_bundles)
+        inference = self._blend_policy_value(node.state, node.to_play, node.context, action_bundles)
         node.priors = inference.priors
         node.expanded = True
 
-        if node.depth >= self.search_config.max_depth or not action_bundles:
+        depth_limit = self.search_config.max_depth if max_decision_depth is None else max_decision_depth
+        if node.depth >= depth_limit or not action_bundles:
             return inference.value
 
         prior_slice = inference.priors[: len(action_bundles)].astype(np.float32, copy=True)
@@ -406,15 +415,14 @@ class PriorGuidedMCTS:
         for action_index in self._branch_indices(node.priors, action_bundles, limit):
             child_state = node.state.clone()
             bundle = action_bundles[action_index]
-            enemy_bundle = self._predict_enemy_bundle(child_state, node.player)
-            if node.player == 0:
-                child_state.resolve_turn(bundle.operations, enemy_bundle.operations)
-            else:
-                child_state.resolve_turn(enemy_bundle.operations, bundle.operations)
+            child_state.apply_operation_list(node.to_play, bundle.operations)
+            child_context = node.context.next_turn()
+            if node.context.settles_after_action and not child_state.terminal:
+                child_state.advance_round()
             node.children.append(
                 SearchNode(
                     state=child_state,
-                    player=node.player,
+                    context=child_context,
                     prior=float(node.priors[action_index]),
                     bundle=bundle,
                     action_index=action_index,
@@ -425,12 +433,19 @@ class PriorGuidedMCTS:
 
     def _puct(self, parent: SearchNode, child: SearchNode) -> float:
         explore = self.search_config.c_puct * child.prior * math.sqrt(parent.visits + 1.0) / (child.visits + 1.0)
-        return child.mean_value + explore
+        return -child.mean_value + explore
 
     def _backpropagate(self, path: list[SearchNode], value: float) -> None:
         for node in reversed(path):
             node.visits += 1
             node.value_sum += value
+            value = -value
+
+    def _max_decision_depth(self, context: DecisionContext) -> int:
+        base = max(int(self.search_config.max_depth), 1)
+        if context.settles_after_action:
+            return base * 2 - 1
+        return base * 2
 
     def _sample_from_policy(self, policy: np.ndarray) -> int:
         threshold = self.rng.random()
@@ -456,11 +471,15 @@ class PriorGuidedMCTS:
         state: BackendState,
         player: int,
         bundles: list[ActionBundle] | None = None,
+        context: DecisionContext | None = None,
         temperature: float = 0.0,
         add_root_noise: bool = False,
     ) -> SearchResult:
-        root = SearchNode(state=state.clone(), player=player)
-        root_value = self._expand(root, bundles=bundles, add_root_noise=add_root_noise)
+        if context is None:
+            context = DecisionContext.for_player(player)
+        root = SearchNode(state=state.clone(), context=context)
+        max_decision_depth = self._max_decision_depth(context)
+        root_value = self._expand(root, bundles=bundles, add_root_noise=add_root_noise, max_decision_depth=max_decision_depth)
         if not root.bundles:
             fallback = ActionBundle(name="hold", score=0.0, tags=("noop",))
             return SearchResult(
@@ -475,13 +494,13 @@ class PriorGuidedMCTS:
         for _ in range(self.search_config.iterations):
             node = root
             path = [root]
-            while node.expanded and node.children and node.depth < self.search_config.max_depth and not node.state.terminal:
+            while node.expanded and node.children and node.depth < max_decision_depth and not node.state.terminal:
                 node = max(node.children, key=lambda child: self._puct(path[-1], child))
                 path.append(node)
-            if node.state.terminal or node.depth >= self.search_config.max_depth:
-                value = self._heuristic_value(node.state, node.player)
+            if node.state.terminal or node.depth >= max_decision_depth:
+                value = self._heuristic_value(node.state, node.to_play, context=node.context)
             else:
-                value = self._expand(node)
+                value = self._expand(node, max_decision_depth=max_decision_depth)
             self._backpropagate(path, value)
 
         visit_counts = np.zeros(len(root.bundles), dtype=np.float32)
@@ -521,3 +540,13 @@ def build_policy_value_net(
     observation = feature_extractor.encode_observation(state, 0, mask)
     obs_dim = len(feature_extractor.flatten_observation(observation))
     return PolicyValueNet(obs_dim=obs_dim, action_dim=action_dim, config=config)
+
+
+def infer_observation_dim(
+    feature_extractor: FeatureExtractor,
+    action_dim: int,
+) -> int:
+    state = create_python_backend_state()
+    mask = np.zeros(action_dim, dtype=np.float32)
+    observation = feature_extractor.encode_observation(state, 0, mask)
+    return len(feature_extractor.flatten_observation(observation))

@@ -24,6 +24,7 @@ from SDK.utils.features import FeatureExtractor
 from SDK.utils.geometry import hex_distance
 from SDK.backend.state import BackendState
 from SDK.backend.model import Operation, Tower
+from SDK.utils.turns import DecisionContext
 
 
 @dataclass(slots=True)
@@ -42,7 +43,16 @@ class ActionCatalog:
         self.max_actions = max_actions
         self.feature_extractor = feature_extractor or FeatureExtractor(max_actions=max_actions)
 
-    def build(self, state: BackendState, player: int) -> list[ActionBundle]:
+    def build(
+        self,
+        state: BackendState,
+        player: int,
+        context: DecisionContext | None = None,
+        *,
+        rerank: bool = True,
+    ) -> list[ActionBundle]:
+        if context is None:
+            context = DecisionContext.for_player(player)
         bundles: list[ActionBundle] = [ActionBundle(name="hold", score=0.0, tags=("noop",))]
         bundles.extend(self._build_candidates(state, player))
         bundles.extend(self._upgrade_candidates(state, player))
@@ -56,7 +66,10 @@ class ActionCatalog:
             if key not in unique or bundle.score > unique[key].score:
                 unique[key] = bundle
         ordered = sorted(unique.values(), key=lambda item: item.score, reverse=True)
-        reranked = self._rerank_with_one_step_rollout(state, player, ordered[: min(len(ordered), self.max_actions * 2)])
+        ordered = ordered[: min(len(ordered), self.max_actions * 2)]
+        if not rerank:
+            return ordered[: self.max_actions]
+        reranked = self._rerank_with_one_step_rollout(state, player, context, ordered)
         return reranked[: self.max_actions]
 
     def action_mask(self, bundles: list[ActionBundle]) -> np.ndarray:
@@ -210,28 +223,38 @@ class ActionCatalog:
                 if len(operations) > 2:
                     continue
                 trial = state.clone()
-                accepted: list[Operation] = []
-                legal = True
-                for op in operations:
-                    if not trial.can_apply_operation(player, op, accepted):
-                        legal = False
-                        break
-                    accepted.append(op)
-                if not legal:
+                invalid_ops = trial.apply_operation_list(player, operations)
+                if invalid_ops:
                     continue
                 score = first.score + second.score * 0.9
                 name = f"{first.name}+{second.name}"
                 results.append(ActionBundle(name=name, operations=tuple(operations), score=score, tags=("combo",)))
         return results
 
-    def _rerank_with_one_step_rollout(self, state: BackendState, player: int, bundles: list[ActionBundle]) -> list[ActionBundle]:
-        baseline = self.feature_extractor.evaluate(state, player)
+    def _rerank_with_one_step_rollout(
+        self,
+        state: BackendState,
+        player: int,
+        context: DecisionContext,
+        bundles: list[ActionBundle],
+    ) -> list[ActionBundle]:
+        baseline = self.feature_extractor.evaluate(state, player, context=context)
         reranked: list[ActionBundle] = []
         for bundle in bundles:
             trial = state.clone()
             trial.apply_operation_list(player, bundle.operations)
-            trial.advance_round()
-            rollout_value = self.feature_extractor.evaluate(trial, player) - baseline
+            child_context = context.next_turn()
+            if not trial.terminal:
+                if context.settles_after_action:
+                    trial.advance_round()
+                else:
+                    enemy = 1 - player
+                    enemy_bundles = self.build(trial, enemy, child_context, rerank=False)
+                    enemy_bundle = enemy_bundles[0] if enemy_bundles else ActionBundle(name="hold")
+                    trial.apply_operation_list(enemy, enemy_bundle.operations)
+                    if not trial.terminal:
+                        trial.advance_round()
+            rollout_value = self.feature_extractor.evaluate(trial, player, context=DecisionContext.for_player(player)) - baseline
             reranked.append(ActionBundle(bundle.name, bundle.operations, bundle.score + rollout_value * 0.2, bundle.tags))
         reranked.sort(key=lambda item: item.score, reverse=True)
         if not reranked:

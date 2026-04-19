@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import time
 
 import numpy as np
 
@@ -11,8 +12,9 @@ from SDK.alphazero import (
     PriorGuidedMCTS,
     SearchConfig,
     build_policy_value_net,
+    infer_observation_dim,
 )
-from SDK.training.env import AntWarParallelEnv
+from SDK.training.env import AntWarSequentialEnv
 from SDK.training.logging_utils import TrainingLogger
 from SDK.utils.actions import ActionCatalog
 from SDK.utils.features import FeatureExtractor
@@ -45,6 +47,8 @@ class AlphaZeroTrainerConfig:
     checkpoint_path: str = "checkpoints/ai_mcts_latest.npz"
     resume_from: str | None = None
     evaluation_episodes: int = 2
+    progress_log_decisions: int = 8
+    progress_log_seconds: float = 5.0
 
 
 @dataclass(slots=True)
@@ -125,9 +129,14 @@ class AlphaZeroSelfPlayTrainer:
         resume_path = Path(self.config.resume_from) if self.config.resume_from else None
         if resume_path is not None and resume_path.exists():
             model = PolicyValueNet.from_checkpoint(resume_path)
+            expected_obs_dim = infer_observation_dim(self.feature_extractor, self.config.max_actions)
             if model.action_dim != self.config.max_actions:
                 raise ValueError(
                     f"checkpoint action_dim={model.action_dim} does not match max_actions={self.config.max_actions}"
+                )
+            if model.obs_dim != expected_obs_dim:
+                raise ValueError(
+                    f"checkpoint obs_dim={model.obs_dim} does not match current feature obs_dim={expected_obs_dim}"
                 )
             return model
         return build_policy_value_net(
@@ -145,49 +154,118 @@ class AlphaZeroSelfPlayTrainer:
             return 1e-6
         return self.config.root_temperature
 
-    def _value_target(self, env: AntWarParallelEnv, player: int) -> float:
+    def _should_log_progress(self, decision_count: int, now: float, last_log_time: float) -> bool:
+        if decision_count <= 0:
+            return False
+        if decision_count == 1:
+            return True
+        decision_interval = self.config.progress_log_decisions
+        if decision_interval > 0 and decision_count % decision_interval == 0:
+            return True
+        time_interval = self.config.progress_log_seconds
+        if time_interval > 0.0 and now - last_log_time >= time_interval:
+            return True
+        return False
+
+    def _value_target(self, env: AntWarSequentialEnv, player: int) -> float:
         if env.state.terminal:
             if env.state.winner is None:
                 return 0.0
             return 1.0 if env.state.winner == player else -1.0
-        raw = self.feature_extractor.evaluate(env.state, player)
+        raw = self.feature_extractor.evaluate(env.state, player, context=env.decision_context)
         return float(np.tanh(raw / self.config.value_scale))
 
-    def collect_episode(self, seed: int) -> tuple[SelfPlayBatch, EpisodeSummary]:
+    def collect_episode(
+        self,
+        seed: int,
+        batch_index: int | None = None,
+        episode_index: int | None = None,
+    ) -> tuple[SelfPlayBatch, EpisodeSummary]:
         env = self.env_factory(seed=seed)
         try:
-            observations, infos = env.reset(seed=seed)
+            env.reset(seed=seed)
             traces = {agent: [] for agent in env.possible_agents}
             total_reward = {agent: 0.0 for agent in env.possible_agents}
-            rounds = 0
-            while env.agents and rounds < self.config.max_rounds:
-                actions = {}
-                for player, agent_name in enumerate(env.possible_agents):
-                    bundles = infos[agent_name]["bundles"]
-                    result = self.search.search(
-                        env.state,
-                        player,
-                        bundles=bundles,
-                        temperature=self._temperature_for_round(env.state.round_index),
-                        add_root_noise=True,
-                    )
-                    current = observations[agent_name]
-                    traces[agent_name].append(
-                        SelfPlaySample(
-                            observation=self.feature_extractor.flatten_observation(current),
-                            mask=current["action_mask"].astype(np.float32),
-                            policy=result.policy.copy(),
-                            value=0.0,
-                        )
-                    )
-                    actions[agent_name] = result.action_index
-
-                observations, rewards, terminations, truncations, infos = env.step(actions)
-                for agent_name in env.possible_agents:
-                    total_reward[agent_name] += float(rewards[agent_name])
-                rounds += 1
-                if all(terminations.values()) or all(truncations.values()):
+            decision_count = 0
+            recent_search_times: list[float] = []
+            episode_start = time.perf_counter()
+            last_progress_time = episode_start
+            if self.logger is not None and batch_index is not None and episode_index is not None:
+                self.logger.log_episode_start(
+                    batch_index=batch_index,
+                    episode_index=episode_index,
+                    payload={
+                        "seed": seed,
+                        "max_rounds": self.config.max_rounds,
+                    },
+                )
+            for agent_name in env.agent_iter():
+                current, reward, termination, truncation, info = env.last()
+                total_reward[agent_name] += float(reward)
+                if agent_name == "player_0" and env.state.round_index >= self.config.max_rounds:
+                    total_reward["player_1"] += float(env.rewards.get("player_1", 0.0))
                     break
+                if termination or truncation:
+                    env.step(None)
+                    continue
+
+                player = env.player_index(agent_name)
+                bundles = info["bundles"]
+                search_start = time.perf_counter()
+                result = self.search.search(
+                    env.state,
+                    player,
+                    bundles=bundles,
+                    context=env.decision_context,
+                    temperature=self._temperature_for_round(env.state.round_index),
+                    add_root_noise=True,
+                )
+                search_elapsed = time.perf_counter() - search_start
+                recent_search_times.append(search_elapsed)
+                if len(recent_search_times) > 16:
+                    recent_search_times.pop(0)
+                traces[agent_name].append(
+                    SelfPlaySample(
+                        observation=self.feature_extractor.flatten_observation(current),
+                        mask=current["action_mask"].astype(np.float32),
+                        policy=result.policy.copy(),
+                        value=0.0,
+                    )
+                )
+                decision_count += 1
+                now = time.perf_counter()
+                if (
+                    self.logger is not None
+                    and batch_index is not None
+                    and episode_index is not None
+                    and self._should_log_progress(decision_count, now, last_progress_time)
+                ):
+                    elapsed = now - episode_start
+                    avg_search_s = sum(recent_search_times) / max(len(recent_search_times), 1)
+                    avg_decision_s = elapsed / max(decision_count, 1)
+                    max_decisions = max(self.config.max_rounds, 1) * 2
+                    eta_upper_bound_s = max(max_decisions - decision_count, 0) * avg_decision_s
+                    self.logger.log_episode_progress(
+                        batch_index=batch_index,
+                        episode_index=episode_index,
+                        payload={
+                            "round_index": env.state.round_index,
+                            "max_rounds": self.config.max_rounds,
+                            "decision_count": decision_count,
+                            "actor": agent_name,
+                            "bundle_count": len(bundles),
+                            "elapsed_s": elapsed,
+                            "last_search_s": search_elapsed,
+                            "avg_search_s": avg_search_s,
+                            "eta_upper_bound_s": eta_upper_bound_s,
+                            "samples_player_0": len(traces["player_0"]),
+                            "samples_player_1": len(traces["player_1"]),
+                            "reward_player_0": round(total_reward["player_0"], 4),
+                            "reward_player_1": round(total_reward["player_1"], 4),
+                        },
+                    )
+                    last_progress_time = now
+                env.step(result.action_index)
 
             player_targets = {
                 "player_0": self._value_target(env, 0),
@@ -213,7 +291,7 @@ class AlphaZeroSelfPlayTrainer:
             )
             summary = EpisodeSummary(
                 seed=seed,
-                rounds=rounds,
+                rounds=env.state.round_index,
                 winner=env.state.winner,
                 reward_player_0=round(total_reward["player_0"], 4),
                 reward_player_1=round(total_reward["player_1"], 4),
@@ -223,6 +301,29 @@ class AlphaZeroSelfPlayTrainer:
             return batch, summary
         finally:
             env.close()
+
+    def _selfplay_metrics(self, summaries: list[EpisodeSummary]) -> dict[str, float]:
+        if not summaries:
+            return {
+                "mean_episode_rounds": 0.0,
+                "selfplay_draw_rate": 0.0,
+                "selfplay_player_0_win_rate": 0.0,
+                "selfplay_player_1_win_rate": 0.0,
+                "mean_reward_player_0": 0.0,
+                "mean_reward_player_1": 0.0,
+            }
+        episodes = float(len(summaries))
+        player_0_wins = sum(1 for summary in summaries if summary.winner == 0)
+        player_1_wins = sum(1 for summary in summaries if summary.winner == 1)
+        draws = sum(1 for summary in summaries if summary.winner is None)
+        return {
+            "mean_episode_rounds": float(sum(summary.rounds for summary in summaries) / episodes),
+            "selfplay_draw_rate": float(draws / episodes),
+            "selfplay_player_0_win_rate": float(player_0_wins / episodes),
+            "selfplay_player_1_win_rate": float(player_1_wins / episodes),
+            "mean_reward_player_0": float(sum(summary.reward_player_0 for summary in summaries) / episodes),
+            "mean_reward_player_1": float(sum(summary.reward_player_1 for summary in summaries) / episodes),
+        }
 
     def _merge_batches(self, batches: list[SelfPlayBatch]) -> SelfPlayBatch:
         return SelfPlayBatch(
@@ -249,40 +350,72 @@ class AlphaZeroSelfPlayTrainer:
     def _play_evaluation_episode(self, seed: int, trained_side: int) -> tuple[int | None, int]:
         env = self.env_factory(seed=seed)
         try:
-            _, infos = env.reset(seed=seed)
-            rounds = 0
-            while env.agents and rounds < self.config.max_rounds:
-                actions = {}
-                for player, agent_name in enumerate(env.possible_agents):
-                    bundles = infos[agent_name]["bundles"]
-                    if player == trained_side:
-                        result = self.eval_search.search(env.state, player, bundles=bundles, temperature=1e-6)
-                    else:
-                        result = self.heuristic_search.search(env.state, player, bundles=bundles, temperature=1e-6)
-                    actions[agent_name] = result.action_index
-                _, _, terminations, truncations, infos = env.step(actions)
-                rounds += 1
-                if all(terminations.values()) or all(truncations.values()):
+            env.reset(seed=seed)
+            for agent_name in env.agent_iter():
+                current, _, termination, truncation, info = env.last()
+                del current
+                if agent_name == "player_0" and env.state.round_index >= self.config.max_rounds:
                     break
-            return env.state.winner, rounds
+                if termination or truncation:
+                    env.step(None)
+                    continue
+                player = env.player_index(agent_name)
+                bundles = info["bundles"]
+                if player == trained_side:
+                    result = self.eval_search.search(
+                        env.state,
+                        player,
+                        bundles=bundles,
+                        context=env.decision_context,
+                        temperature=1e-6,
+                    )
+                else:
+                    result = self.heuristic_search.search(
+                        env.state,
+                        player,
+                        bundles=bundles,
+                        context=env.decision_context,
+                        temperature=1e-6,
+                    )
+                env.step(result.action_index)
+            return env.state.winner, env.state.round_index
         finally:
             env.close()
 
-    def evaluate_against_heuristic(self, num_episodes: int | None = None) -> dict[str, float]:
+    def evaluate_against_heuristic(
+        self,
+        num_episodes: int | None = None,
+        batch_index: int | None = None,
+    ) -> dict[str, float]:
         games = num_episodes if num_episodes is not None else self.config.evaluation_episodes
         if games <= 0:
             return {"eval_episodes": 0.0, "eval_win_rate": 0.0, "eval_draw_rate": 0.0}
+        if self.logger is not None and batch_index is not None:
+            self.logger.log_evaluation_start(batch_index=batch_index, payload={"eval_episodes": games})
         trained_wins = 0
         draws = 0
         total_rounds = 0
         for episode_index in range(games):
             trained_side = episode_index % 2
+            evaluation_start = time.perf_counter()
             winner, rounds = self._play_evaluation_episode(self.config.seed + 10_000 + episode_index, trained_side)
             total_rounds += rounds
             if winner is None:
                 draws += 1
             elif winner == trained_side:
                 trained_wins += 1
+            if self.logger is not None and batch_index is not None:
+                self.logger.log_evaluation_episode(
+                    batch_index=batch_index,
+                    episode_index=episode_index,
+                    payload={
+                        "trained_side": trained_side,
+                        "winner": winner,
+                        "rounds": rounds,
+                        "elapsed_s": time.perf_counter() - evaluation_start,
+                        "running_win_rate": float(trained_wins / (episode_index + 1)),
+                    },
+                )
         return {
             "eval_episodes": float(games),
             "eval_win_rate": float(trained_wins / games),
@@ -299,22 +432,44 @@ class AlphaZeroSelfPlayTrainer:
         history: list[dict[str, float]] = []
         samples: list[EpisodeSummary] = []
         for batch_index in range(updates):
+            batch_start = time.perf_counter()
+            if self.logger is not None:
+                self.logger.log_batch_start(
+                    batch_index=batch_index,
+                    total_batches=updates,
+                    payload={
+                        "episodes": self.config.episodes,
+                        "search_iterations": self.config.search_iterations,
+                        "max_depth": self.config.max_depth,
+                        "max_rounds": self.config.max_rounds,
+                        "checkpoint_path": self.config.checkpoint_path,
+                    },
+                )
             episode_batches = []
             episode_summaries = []
+            selfplay_start = time.perf_counter()
             for episode_offset in range(self.config.episodes):
                 seed = self.config.seed + batch_index * 1_000 + episode_offset
-                batch, summary = self.collect_episode(seed=seed)
+                batch, summary = self.collect_episode(seed=seed, batch_index=batch_index, episode_index=episode_offset)
                 episode_batches.append(batch)
                 episode_summaries.append(summary)
                 if self.logger is not None:
                     self.logger.log_episode(batch_index=batch_index, episode_index=episode_offset, payload=asdict(summary))
+            selfplay_elapsed_s = time.perf_counter() - selfplay_start
             merged = self._merge_batches(episode_batches)
+            update_start = time.perf_counter()
             metrics = self.update_from_batch(merged)
+            metrics["update_elapsed_s"] = float(time.perf_counter() - update_start)
             metrics["batch"] = float(batch_index)
             metrics["episodes"] = float(self.config.episodes)
             metrics["checkpoint_saved"] = 1.0
+            metrics["selfplay_elapsed_s"] = float(selfplay_elapsed_s)
+            metrics.update(self._selfplay_metrics(episode_summaries))
             checkpoint_path = self.save_checkpoint()
-            metrics.update(self.evaluate_against_heuristic())
+            evaluation_start = time.perf_counter()
+            metrics.update(self.evaluate_against_heuristic(batch_index=batch_index))
+            metrics["evaluation_elapsed_s"] = float(time.perf_counter() - evaluation_start)
+            metrics["batch_elapsed_s"] = float(time.perf_counter() - batch_start)
             history.append(metrics)
             samples.extend(episode_summaries)
             if self.logger is not None:

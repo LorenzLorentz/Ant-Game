@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from SDK.utils.features import FeatureExtractor
-from SDK.training.env import AntWarParallelEnv
+from SDK.training.env import AntWarSequentialEnv
 
 
 @dataclass(slots=True)
@@ -57,31 +57,32 @@ class BaseSelfPlayTrainer(ABC):
         returns.reverse()
         return np.asarray(returns, dtype=np.float32)
 
-    def collect_episode(self, env: AntWarParallelEnv, explore: bool = True, seed: int | None = None) -> EpisodeBatch:
-        observations, _ = env.reset(seed=self.seed if seed is None else seed)
+    def collect_episode(self, env: AntWarSequentialEnv, explore: bool = True, seed: int | None = None) -> EpisodeBatch:
+        env.reset(seed=self.seed if seed is None else seed)
         traces = {agent: [] for agent in env.possible_agents}
-        done = False
-        while not done:
-            actions = {}
-            for agent in env.possible_agents:
-                if agent not in observations:
-                    continue
-                action = self.select_action(observations[agent], explore=explore)
-                actions[agent] = action
-            next_observations, rewards, terminations, truncations, _ = env.step(actions)
-            done = all(terminations.values()) or all(truncations.values())
-            for agent in env.possible_agents:
-                current = observations[agent]
-                traces[agent].append(
-                    TrajectoryStep(
-                        observation=self.feature_extractor.flatten_observation(current),
-                        mask=current["action_mask"].astype(np.float32),
-                        action=actions[agent],
-                        reward=float(rewards[agent]),
-                        done=done,
-                    )
-                )
-            observations = next_observations
+        pending: dict[str, TrajectoryStep | None] = {agent: None for agent in env.possible_agents}
+        for agent in env.agent_iter():
+            observation, reward, termination, truncation, _ = env.last()
+            previous = pending[agent]
+            if previous is not None:
+                previous.reward = float(reward)
+                previous.done = bool(termination or truncation)
+                pending[agent] = None
+            if termination or truncation:
+                env.step(None)
+                continue
+
+            action = self.select_action(observation, explore=explore)
+            current = TrajectoryStep(
+                observation=self.feature_extractor.flatten_observation(observation),
+                mask=observation["action_mask"].astype(np.float32),
+                action=action,
+                reward=0.0,
+                done=False,
+            )
+            traces[agent].append(current)
+            pending[agent] = current
+            env.step(action)
 
         observation_rows = []
         mask_rows = []
@@ -127,14 +128,16 @@ class BaseSelfPlayTrainer(ABC):
         for episode_index in range(num_episodes):
             env = self.env_factory(seed=self.seed + 1000 + episode_index)
             rollout_seed = self.seed + 1000 + episode_index
-            observations, _ = env.reset(seed=rollout_seed)
+            env.reset(seed=rollout_seed)
             total = 0.0
-            done = False
-            while not done:
-                actions = {agent: self.select_action(observation, explore=False) for agent, observation in observations.items()}
-                observations, rewards, terminations, truncations, _ = env.step(actions)
-                total += rewards["player_0"]
-                done = all(terminations.values()) or all(truncations.values())
+            for agent in env.agent_iter():
+                observation, reward, termination, truncation, _ = env.last()
+                if agent == "player_0":
+                    total += float(reward)
+                if termination or truncation:
+                    env.step(None)
+                    continue
+                env.step(self.select_action(observation, explore=False))
             returns.append(total)
             env.close()
         return {"eval_return": float(np.mean(returns)), "eval_episodes": float(num_episodes)}

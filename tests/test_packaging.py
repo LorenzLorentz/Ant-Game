@@ -129,6 +129,17 @@ def test_zip_mcts_and_zip_greedy_include_expected_support_files(tmp_path: Path) 
     assert not (greedy_root / "AI" / "ai_greedy").exists()
 
 
+def test_zip_mcts_packages_latest_checkpoint_bytes(tmp_path: Path) -> None:
+    package_root = tmp_path / "mcts-package"
+    returned_path = _run_packaging_script("zip_mcts.sh", package_root)
+    assert returned_path == package_root
+    packaged_checkpoint = package_root / "ai_mcts_model.npz"
+    source_checkpoint = Path("checkpoints/ai_mcts_latest.npz")
+    assert packaged_checkpoint.exists()
+    assert source_checkpoint.exists()
+    assert packaged_checkpoint.read_bytes() == source_checkpoint.read_bytes()
+
+
 def test_gitignore_covers_transient_directories() -> None:
     content = Path(".gitignore").read_text()
     for pattern in ("build/", "__pycache__/", ".pytest_cache/", "logs/"):

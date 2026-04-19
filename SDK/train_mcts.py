@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -10,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from SDK.training import AlphaZeroSelfPlayTrainer, AlphaZeroTrainerConfig, AntWarParallelEnv, TrainingLogger
+from SDK.training import AlphaZeroSelfPlayTrainer, AlphaZeroTrainerConfig, AntWarSequentialEnv, TrainingLogger
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,6 +36,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", type=str, default=None, help="Optional run name used under the log directory.")
     parser.add_argument("--resume-from", type=str, default=None, help="Optional checkpoint path used to resume training.")
     parser.add_argument("--evaluation-episodes", type=int, default=2, help="How many heuristic matches to run after each update.")
+    parser.add_argument(
+        "--progress-log-decisions",
+        type=int,
+        default=8,
+        help="Emit an in-episode progress heartbeat every N decisions. Use 1 for very detailed logs.",
+    )
+    parser.add_argument(
+        "--progress-log-seconds",
+        type=float,
+        default=5.0,
+        help="Emit an in-episode progress heartbeat if this many seconds pass without a heartbeat.",
+    )
     parser.add_argument(
         "--prefer-native-backend",
         action="store_true",
@@ -64,6 +77,8 @@ def main() -> None:
         checkpoint_path=args.checkpoint,
         resume_from=args.resume_from,
         evaluation_episodes=args.evaluation_episodes,
+        progress_log_decisions=args.progress_log_decisions,
+        progress_log_seconds=args.progress_log_seconds,
     )
     logger = TrainingLogger(base_dir=args.log_dir, run_name=args.run_name)
     logger.log_config(
@@ -74,7 +89,7 @@ def main() -> None:
     )
     try:
         trainer = AlphaZeroSelfPlayTrainer(
-            env_factory=lambda seed=0: AntWarParallelEnv(
+            env_factory=lambda seed=0: AntWarSequentialEnv(
                 seed=seed,
                 max_actions=args.max_actions,
                 prefer_native_backend=args.prefer_native_backend,
@@ -84,6 +99,7 @@ def main() -> None:
         )
         history, samples = trainer.train()
         latest = history[-1] if history else {}
+        training_entrypoint = os.getenv("AGENT_TRADITION_TRAINING_ENTRYPOINT", "SDK/train_mcts.py")
         result = {
             "episodes": args.episodes,
             "batches": args.batches,
@@ -93,7 +109,7 @@ def main() -> None:
             "checkpoint": str(Path(args.checkpoint)),
             "log_dir": str(logger.run_dir),
             "resume_from": args.resume_from,
-            "training_entrypoint": "SDK/train_mcts.py",
+            "training_entrypoint": training_entrypoint,
             "trainer_logic_hook": "AlphaZeroSelfPlayTrainer.update_from_batch()",
             "agent_logic_file": "AI/ai_mcts.py",
             "policy_backend": "SDK.alphazero.PolicyValueNet",

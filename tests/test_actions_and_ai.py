@@ -331,6 +331,82 @@ def test_native_backend_lightning_storm_matches_new_damage_profile() -> None:
     assert tower.hp == 12
 
 
+def test_native_backend_lightning_storm_triggers_immediately_when_deployed() -> None:
+    state = load_backend(prefer_native=True).initial_state(seed=31)
+    state.sync_public_round_state(
+        PublicRoundState(
+            round_index=1,
+            towers=[],
+            ants=[
+                (1, 1, 8, 9, 25, 1, 0, int(AntStatus.ALIVE), int(AntBehavior.DEFAULT), int(AntKind.WORKER)),
+                (2, 1, 10, 9, 30, 0, 0, int(AntStatus.ALIVE), int(AntBehavior.DEFAULT), int(AntKind.COMBAT)),
+            ],
+            coins=(200, 50),
+            camps_hp=(50, 50),
+            speed_lv=(0, 0),
+            anthp_lv=(0, 0),
+            weapon_cooldowns=((0, 0, 0, 0), (0, 0, 0, 0)),
+            active_effects=[],
+        )
+    )
+
+    state.apply_operation(0, Operation(OperationType.USE_LIGHTNING_STORM, 9, 9))
+
+    ants = {ant.ant_id: ant for ant in state.ants}
+    assert ants[1].hp == 5
+    assert ants[2].hp == 10
+    assert state.active_effects[0].remaining_turns == 15
+
+
+def test_native_backend_lightning_storm_respects_evasion_shield() -> None:
+    state = load_backend(prefer_native=True).initial_state(seed=33)
+    state.sync_public_round_state(
+        PublicRoundState(
+            round_index=1,
+            towers=[],
+            ants=[
+                (1, 1, 9, 9, 25, 1, 0, int(AntStatus.ALIVE), int(AntBehavior.DEFAULT), int(AntKind.WORKER)),
+            ],
+            coins=(200, 200),
+            camps_hp=(50, 50),
+            speed_lv=(0, 0),
+            anthp_lv=(0, 0),
+            weapon_cooldowns=((0, 0, 0, 0), (0, 0, 0, 0)),
+            active_effects=[],
+        )
+    )
+
+    state.apply_operation(1, Operation(OperationType.USE_EMERGENCY_EVASION, 9, 9))
+    state.advance_round()
+    state.apply_operation(0, Operation(OperationType.USE_LIGHTNING_STORM, 9, 9))
+
+    assert state.ants[0].hp == 25
+
+
+def test_native_backend_basic_tower_only_hits_adjacent_targets() -> None:
+    state = load_backend(prefer_native=True).initial_state(seed=41)
+    state.sync_public_round_state(
+        PublicRoundState(
+            round_index=1,
+            towers=[(7, 0, 12, 9, int(TowerType.BASIC), 0, 10)],
+            ants=[
+                (1, 1, 10, 9, 20, 0, 0, int(AntStatus.ALIVE), int(AntBehavior.DEFAULT), int(AntKind.WORKER)),
+            ],
+            coins=(50, 50),
+            camps_hp=(50, 50),
+            speed_lv=(0, 0),
+            anthp_lv=(0, 0),
+            weapon_cooldowns=((0, 0, 0, 0), (0, 0, 0, 0)),
+            active_effects=[],
+        )
+    )
+
+    state.advance_round()
+
+    ant = next(ant for ant in state.ants if ant.ant_id == 1)
+    assert ant.hp == 20
+
+
 def test_native_backend_uses_updated_lightning_storm_cost_cooldown_and_duration() -> None:
     state = load_backend(prefer_native=True).initial_state(seed=29)
     public_state = state.to_public_round_state()

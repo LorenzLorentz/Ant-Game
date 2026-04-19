@@ -85,7 +85,10 @@ case "$TARGET" in
     ;;
   mcts)
     ARCHIVE_NAME="ai_mcts.zip"
-    FILE_MAPPINGS=("${REPO_ROOT}/AI/ai_mcts.py:ai.py")
+    FILE_MAPPINGS=(
+      "${REPO_ROOT}/AI/ai_mcts.py:ai.py"
+      "${REPO_ROOT}/checkpoints/ai_mcts_latest.npz:ai_mcts_model.npz"
+    )
     ;;
   greedy)
     ARCHIVE_NAME="ai_greedy.zip"

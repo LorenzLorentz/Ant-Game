@@ -1015,11 +1015,14 @@ class GameState:
             stats = SUPER_WEAPON_STATS[weapon_type]
             self.weapon_cooldowns[player, weapon_type] = stats.cooldown
             self.super_weapon_usage[player] += 1
+            effect = WeaponEffect(weapon_type, player, operation.arg0, operation.arg1, stats.duration)
+            self.active_effects.append(effect)
             if weapon_type == SuperWeaponType.EMERGENCY_EVASION:
                 for ant in self.ants:
                     if ant.player == player and hex_distance(operation.arg0, operation.arg1, ant.x, ant.y) <= stats.attack_range:
                         ant.grant_evasion(2, grant_control_free_on_deplete=True)
-            self.active_effects.append(WeaponEffect(weapon_type, player, operation.arg0, operation.arg1, stats.duration))
+            elif weapon_type == SuperWeaponType.LIGHTNING_STORM:
+                self._apply_lightning_effect(effect)
             self._mark_risk_fields_dirty()
             return
         if operation.op_type == OperationType.UPGRADE_GENERATION_SPEED:
@@ -1065,26 +1068,32 @@ class GameState:
             ant.evasion = ant.shield > 0
             ant.refresh_status()
 
+    def _apply_lightning_effect(self, effect: WeaponEffect) -> None:
+        if effect.weapon_type != SuperWeaponType.LIGHTNING_STORM:
+            return
+        if effect.last_trigger_round == self.round_index:
+            return
+        effect.last_trigger_round = self.round_index
+        duration = SUPER_WEAPON_STATS[effect.weapon_type].duration
+        active_turn = duration - effect.remaining_turns + 1
+        for ant in self.ants:
+            if ant.player != effect.player and ant.is_alive() and effect.in_range(ant.x, ant.y):
+                ant.take_damage(LIGHTNING_STORM_ANT_DAMAGE)
+        if active_turn <= 0 or active_turn % LIGHTNING_STORM_TOWER_INTERVAL != 0:
+            return
+        destroyed_ids: set[int] = set()
+        for tower in self.towers:
+            if tower.player == effect.player or not effect.in_range(tower.x, tower.y):
+                continue
+            if tower.take_damage(LIGHTNING_STORM_TOWER_DAMAGE):
+                destroyed_ids.add(tower.tower_id)
+        if destroyed_ids:
+            self.towers = [tower for tower in self.towers if tower.tower_id not in destroyed_ids]
+            self._mark_risk_fields_dirty()
+
     def _apply_lightning_storm(self) -> None:
         for effect in self.active_effects:
-            if effect.weapon_type != SuperWeaponType.LIGHTNING_STORM:
-                continue
-            duration = SUPER_WEAPON_STATS[effect.weapon_type].duration
-            active_turn = duration - effect.remaining_turns + 1
-            for ant in self.ants:
-                if ant.player != effect.player and ant.is_alive() and effect.in_range(ant.x, ant.y):
-                    ant.take_damage(LIGHTNING_STORM_ANT_DAMAGE)
-            if active_turn <= 0 or active_turn % LIGHTNING_STORM_TOWER_INTERVAL != 0:
-                continue
-            destroyed_ids: set[int] = set()
-            for tower in self.towers:
-                if tower.player == effect.player or not effect.in_range(tower.x, tower.y):
-                    continue
-                if tower.take_damage(LIGHTNING_STORM_TOWER_DAMAGE):
-                    destroyed_ids.add(tower.tower_id)
-            if destroyed_ids:
-                self.towers = [tower for tower in self.towers if tower.tower_id not in destroyed_ids]
-                self._mark_risk_fields_dirty()
+            self._apply_lightning_effect(effect)
 
     def _attack_ants(self) -> None:
         self._prepare_ants_for_attack()

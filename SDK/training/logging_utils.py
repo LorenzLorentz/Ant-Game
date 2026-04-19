@@ -72,6 +72,69 @@ class TrainingLogger:
         self.log_event("config", payload)
         self.logger.info("training run initialized run_dir=%s", self.run_dir)
 
+    def log_batch_start(self, batch_index: int, total_batches: int, payload: dict[str, Any]) -> None:
+        self.log_event(
+            "batch_start",
+            {
+                "batch_index": batch_index,
+                "total_batches": total_batches,
+                **payload,
+            },
+        )
+        self.logger.info(
+            "batch-start batch=%s/%s episodes=%s iterations=%s max_depth=%s max_rounds=%s checkpoint=%s",
+            batch_index + 1,
+            total_batches,
+            payload.get("episodes"),
+            payload.get("search_iterations"),
+            payload.get("max_depth"),
+            payload.get("max_rounds"),
+            payload.get("checkpoint_path"),
+        )
+
+    def log_episode_start(self, batch_index: int, episode_index: int, payload: dict[str, Any]) -> None:
+        self.log_event(
+            "episode_start",
+            {
+                "batch_index": batch_index,
+                "episode_index": episode_index,
+                **payload,
+            },
+        )
+        self.logger.info(
+            "episode-start batch=%s episode=%s seed=%s max_rounds=%s",
+            batch_index,
+            episode_index,
+            payload.get("seed"),
+            payload.get("max_rounds"),
+        )
+
+    def log_episode_progress(self, batch_index: int, episode_index: int, payload: dict[str, Any]) -> None:
+        self.log_event(
+            "episode_progress",
+            {
+                "batch_index": batch_index,
+                "episode_index": episode_index,
+                **payload,
+            },
+        )
+        self.logger.info(
+            "episode-progress batch=%s episode=%s round=%s/%s decision=%s actor=%s bundles=%s elapsed=%.1fs last_search=%.2fs avg_search=%.2fs eta<=%.1fs samples_p0=%s samples_p1=%s",
+            batch_index,
+            episode_index,
+            payload.get("round_index"),
+            payload.get("max_rounds"),
+            payload.get("decision_count"),
+            payload.get("actor"),
+            payload.get("bundle_count"),
+            float(payload.get("elapsed_s", 0.0)),
+            float(payload.get("last_search_s", 0.0)),
+            float(payload.get("avg_search_s", 0.0)),
+            float(payload.get("eta_upper_bound_s", 0.0)),
+            payload.get("samples_player_0"),
+            payload.get("samples_player_1"),
+        )
+
     def log_episode(self, batch_index: int, episode_index: int, payload: dict[str, Any]) -> None:
         self.log_event(
             "episode",
@@ -100,13 +163,49 @@ class TrainingLogger:
             },
         )
         self.logger.info(
-            "batch=%s policy_loss=%.4f value_loss=%.4f entropy=%.4f eval_win_rate=%.4f samples=%s",
+            "batch=%s policy_loss=%.4f value_loss=%.4f entropy=%.4f eval_win_rate=%.4f selfplay_rounds=%.2f batch_elapsed=%.1fs samples=%s",
             batch_index,
             float(payload.get("policy_loss", 0.0)),
             float(payload.get("value_loss", 0.0)),
             float(payload.get("entropy", 0.0)),
             float(payload.get("eval_win_rate", 0.0)),
+            float(payload.get("mean_episode_rounds", 0.0)),
+            float(payload.get("batch_elapsed_s", 0.0)),
             payload.get("samples"),
+        )
+
+    def log_evaluation_start(self, batch_index: int, payload: dict[str, Any]) -> None:
+        self.log_event(
+            "evaluation_start",
+            {
+                "batch_index": batch_index,
+                **payload,
+            },
+        )
+        self.logger.info(
+            "eval-start batch=%s episodes=%s",
+            batch_index,
+            payload.get("eval_episodes"),
+        )
+
+    def log_evaluation_episode(self, batch_index: int, episode_index: int, payload: dict[str, Any]) -> None:
+        self.log_event(
+            "evaluation_episode",
+            {
+                "batch_index": batch_index,
+                "episode_index": episode_index,
+                **payload,
+            },
+        )
+        self.logger.info(
+            "eval-episode batch=%s episode=%s trained_side=%s winner=%s rounds=%s elapsed=%.1fs running_win_rate=%.3f",
+            batch_index,
+            episode_index,
+            payload.get("trained_side"),
+            payload.get("winner"),
+            payload.get("rounds"),
+            float(payload.get("elapsed_s", 0.0)),
+            float(payload.get("running_win_rate", 0.0)),
         )
 
     def log_checkpoint(self, batch_index: int, checkpoint_path: str | Path) -> None:

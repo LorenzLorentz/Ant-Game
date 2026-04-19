@@ -416,6 +416,27 @@ def test_cpp_game_worker_tower_pressure_matches_python_on_frontline_basic_tower(
         assert cpp_ants[round_index][0] == py_ants[round_index][0]
 
 
+def test_cpp_game_basic_tower_does_not_hit_distance_two_target(tmp_path: Path) -> None:
+    rounds = 13
+    rounds0 = [[] for _ in range(rounds)]
+    rounds1 = [[Operation(OperationType.BUILD_TOWER, 12, 9)]] + [[] for _ in range(rounds - 1)]
+
+    replay = _run_game_replay(
+        replay_path=tmp_path / "basic-range-regression-replay.json",
+        seed=7,
+        movement_policy="enhanced",
+        rounds0=rounds0,
+        rounds1=rounds1,
+    )
+    cpp_ants = _cpp_player_ant_snapshots(replay[:rounds], player=0)
+
+    x, y, _, _, hp = cpp_ants[11][0]
+    assert (x, y, hp) == (11, 9, 20)
+
+    x, y, _, _, hp = cpp_ants[12][0]
+    assert (x, y, hp) == (11, 8, 15)
+
+
 def test_cpp_game_combat_tower_attack_matches_python_on_frontline_basic_tower(tmp_path: Path) -> None:
     rounds = 18
     rounds0 = [[] for _ in range(rounds)]

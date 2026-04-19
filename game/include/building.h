@@ -59,11 +59,11 @@ class DefenseTower : public Building {
     TowerType tower_type;
     int damage = 5;
     double spd = 2;
-    int range = 2;
+    int range = 1;
     int hp = 10;
     int hp_limit = 10;
-    int attack_pos_x, attack_pos_y;
-    bool changed;
+    int attack_pos_x = 0, attack_pos_y = 0;
+    bool changed = false;
     std::vector<int> attacked_ants;
     void set_stats_for_type(TowerType tower_type_);
 
@@ -73,7 +73,10 @@ class DefenseTower : public Building {
 
     DefenseTower(int x, int y, int player, int id, int type)
         : Building(x, y, player, id, type), level(0),
-          tower_type(TowerType::Basic) {}
+          tower_type(TowerType::Basic), attack_pos_x(x), attack_pos_y(y) {
+        set_stats_for_type(TowerType::Basic);
+        hp = hp_limit;
+    }
     bool upgrade_type_check(int new_type) const;
     TowerType tower_downgrade_type() const;
     bool upgrade(TowerType tower_type_);

@@ -160,6 +160,7 @@ class Game {
                        const std::pair<int, int> *target = nullptr);
     void maybe_control_free(Ant &ant, bool was_active, bool is_active);
     void prepare_ants_for_attack();
+    void apply_lightning_storm(Item &it, int player);
     void damage_ant_by_tower(DefenseTower &tower, Ant &ant);
     int tower_count_for_player(int player) const;
 

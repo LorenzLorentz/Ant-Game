@@ -10,10 +10,11 @@ except ModuleNotFoundError as exc:
         raise
     from AI.common import BaseAgent
 
-from SDK.alphazero import PolicyValueNet, PriorGuidedMCTS, SearchConfig
+from SDK.alphazero import PolicyValueNet, PriorGuidedMCTS, SearchConfig, infer_observation_dim
 from SDK.utils.actions import ActionBundle
 from SDK.utils.constants import MAX_ACTIONS
 from SDK.backend.state import BackendState
+from SDK.utils.turns import DecisionContext
 
 
 class MCTSAgent(BaseAgent):
@@ -64,6 +65,7 @@ class MCTSAgent(BaseAgent):
         return candidates
 
     def _load_model(self, model_path: str | os.PathLike[str] | None) -> PolicyValueNet | None:
+        expected_obs_dim = infer_observation_dim(self.feature_extractor, self.catalog.max_actions)
         for candidate in self._candidate_model_paths(model_path):
             if not candidate.exists():
                 continue
@@ -73,8 +75,13 @@ class MCTSAgent(BaseAgent):
                 continue
             if model.action_dim != self.catalog.max_actions:
                 continue
+            if model.obs_dim != expected_obs_dim:
+                continue
             return model
         return None
+
+    def list_bundles(self, state: BackendState, player: int) -> list[ActionBundle]:
+        return self.catalog.build(state, player, context=DecisionContext.for_player(player), rerank=False)
 
     def choose_bundle(
         self,
@@ -89,6 +96,7 @@ class MCTSAgent(BaseAgent):
             state=state,
             player=player,
             bundles=bundles,
+            context=DecisionContext.for_player(player),
             temperature=1e-6,
             add_root_noise=False,
         )

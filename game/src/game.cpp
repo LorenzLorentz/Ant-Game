@@ -861,6 +861,39 @@ void Game::prepare_ants_for_attack() {
     }
 }
 
+void Game::apply_lightning_storm(Item &it, int player) {
+    if (!it.duration || it.last_trigger_round == round)
+        return;
+    it.last_trigger_round = round;
+    bool destroyed_any_tower = false;
+    for (auto &ant : ants)
+    {
+        if (ant.get_player() == !player &&
+            distance(Pos(it.x, it.y), Pos(ant.get_x(), ant.get_y())) <= 3)
+        {
+            ant.set_hp(-LIGHTNING_STORM_ANT_DAMAGE);
+        }
+    }
+    if (lightning_storm_tower_strike_turn(it.duration))
+    {
+        for (auto &tower : defensive_towers)
+        {
+            if (tower.destroy() || tower.get_player() == player)
+                continue;
+            if (distance(Pos(it.x, it.y), Pos(tower.get_x(), tower.get_y())) > 3)
+                continue;
+            tower.set_changed_this_round();
+            if (!tower.take_damage(LIGHTNING_STORM_TOWER_DAMAGE))
+                continue;
+            map.destroy(tower.get_x(), tower.get_y());
+            tower.set_destroy();
+            destroyed_any_tower = true;
+        }
+    }
+    if (destroyed_any_tower)
+        mark_risk_fields_dirty();
+}
+
 void Game::damage_ant_by_tower(DefenseTower &tower, Ant &ant) {
     ant.set_hp(-tower.get_damage());
     if (ant.get_status() == Ant::Status::Fail)
@@ -1409,37 +1442,7 @@ void Game::attack_ants()
     {
         int player = i;
         Item &it = item[player][ItemType::LightingStorm];
-        if (it.duration)
-        {
-            bool destroyed_any_tower = false;
-            for (auto &ant : ants)
-            {
-                if (ant.get_player() == !player &&
-                    distance(Pos(it.x, it.y), Pos(ant.get_x(), ant.get_y())) <=
-                        3)
-                {
-                    ant.set_hp_true(-LIGHTNING_STORM_ANT_DAMAGE);
-                }
-            }
-            if (lightning_storm_tower_strike_turn(it.duration))
-            {
-                for (auto &tower : defensive_towers)
-                {
-                    if (tower.destroy() || tower.get_player() == player)
-                        continue;
-                    if (distance(Pos(it.x, it.y), Pos(tower.get_x(), tower.get_y())) > 3)
-                        continue;
-                    tower.set_changed_this_round();
-                    if (!tower.take_damage(LIGHTNING_STORM_TOWER_DAMAGE))
-                        continue;
-                    map.destroy(tower.get_x(), tower.get_y());
-                    tower.set_destroy();
-                    destroyed_any_tower = true;
-                }
-            }
-            if (destroyed_any_tower)
-                mark_risk_fields_dirty();
-        }
+        apply_lightning_storm(it, player);
     }
     for (auto &tower : defensive_towers)
     {
@@ -2170,6 +2173,7 @@ bool Game::apply_operation(const std::vector<Operation> &op_list, int player,
             else
                 player1.super_weapons_usage++;
             item[player][it] = Item(it, x, y);
+            apply_lightning_storm(item[player][it], player);
             mark_risk_fields_dirty();
 
             break;

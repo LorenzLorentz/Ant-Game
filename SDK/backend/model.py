@@ -393,6 +393,7 @@ class WeaponEffect:
     x: int
     y: int
     remaining_turns: int
+    last_trigger_round: int = -1
 
     def clone(self) -> WeaponEffect:
         return WeaponEffect(
@@ -401,6 +402,7 @@ class WeaponEffect:
             x=self.x,
             y=self.y,
             remaining_turns=self.remaining_turns,
+            last_trigger_round=self.last_trigger_round,
         )
 
     def in_range(self, x: int, y: int) -> bool:

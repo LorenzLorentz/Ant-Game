@@ -11,7 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from AI.ai_example import AI as ExampleAgent
 from SDK.backend import create_python_backend_state
-from SDK.training import AntWarParallelEnv
+from SDK.training import AntWarSequentialEnv
 from SDK.utils.actions import ActionCatalog
 
 
@@ -29,10 +29,12 @@ class ExampleTrainerGuide:
         agent = ExampleAgent(seed=self.seed, max_actions=self.max_actions)
         chosen_index = agent.choose_action_index(state, 0, bundles=bundles)
 
-        env = AntWarParallelEnv(seed=self.seed, max_actions=self.max_actions)
+        env = AntWarSequentialEnv(seed=self.seed, max_actions=self.max_actions)
         try:
             observations, infos = env.reset(seed=self.seed)
-            env.step({"player_0": 0, "player_1": 0})
+            for agent in env.agent_iter(max_iter=2):
+                _, _, termination, truncation, _ = env.last()
+                env.step(None if termination or truncation else 0)
         finally:
             env.close()
 

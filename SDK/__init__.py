@@ -16,6 +16,7 @@ __all__ = [
     "ActionBundle",
     "ActionCatalog",
     "AntWarParallelEnv",
+    "AntWarSequentialEnv",
     "BackendState",
     "FeatureExtractor",
     "ForecastOperation",
@@ -31,13 +32,14 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name not in {"AntWarParallelEnv", "env"}:
+    if name not in {"AntWarParallelEnv", "AntWarSequentialEnv", "env"}:
         raise AttributeError(f"module 'SDK' has no attribute {name!r}")
-    from SDK.training import AntWarParallelEnv, env
+    from SDK.training import AntWarParallelEnv, AntWarSequentialEnv, env
 
     globals().update(
         {
             "AntWarParallelEnv": AntWarParallelEnv,
+            "AntWarSequentialEnv": AntWarSequentialEnv,
             "env": env,
         }
     )

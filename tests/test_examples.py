@@ -120,3 +120,40 @@ def test_train_mcts_script_writes_logs(tmp_path: Path) -> None:
     assert (run_dir / "events.jsonl").exists()
     assert (run_dir / "summary.json").exists()
     assert (run_dir / "train.log").exists()
+
+
+def test_train_mcts_10epoch_script_emits_progress_logs(tmp_path: Path) -> None:
+    log_root = tmp_path / "logs10"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "SDK/train_mcts_10epoch.py",
+            "--batches",
+            "1",
+            "--episodes",
+            "1",
+            "--iterations",
+            "2",
+            "--max-depth",
+            "1",
+            "--max-rounds",
+            "2",
+            "--seed",
+            "9",
+            "--evaluation-episodes",
+            "1",
+            "--log-dir",
+            str(log_root),
+            "--run-name",
+            "smoke10",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+    run_dir = Path(payload["log_dir"])
+    assert payload["training_entrypoint"] == "SDK/train_mcts_10epoch.py"
+    train_log = (run_dir / "train.log").read_text(encoding="utf-8")
+    assert "batch-start" in train_log
+    assert "episode-progress" in train_log
