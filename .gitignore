@@ -48,3 +48,11 @@ update.md
 
 AI/ai_greedy_cpp
 checkpoints/
+
+# 用户本地产生的对局文件夹、模型与日志
+match_*/
+test_re/
+*.pth
+*.pdf
+train_loop.sh
+export_np.py
