@@ -117,8 +117,8 @@ def read_text(path: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a full local game<->AI<->judger match")
-    parser.add_argument("--ai0", default="greedy", choices=["random", "mcts", "greedy"])
-    parser.add_argument("--ai1", default="greedy", choices=["random", "mcts", "greedy"])
+    parser.add_argument("--ai0", default="greedy", choices=["random", "mcts", "greedy", "example"])
+    parser.add_argument("--ai1", default="greedy", choices=["random", "mcts", "greedy", "example"])
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--keep-dir", type=Path, default=None,
                         help="Keep packaged AIs, replay, and stderr logs in this directory")

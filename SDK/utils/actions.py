@@ -238,28 +238,56 @@ class ActionCatalog:
         context: DecisionContext,
         bundles: list[ActionBundle],
     ) -> list[ActionBundle]:
-        baseline = self.feature_extractor.evaluate(state, player, context=context)
-        reranked: list[ActionBundle] = []
-        for bundle in bundles:
-            trial = state.clone()
-            trial.apply_operation_list(player, bundle.operations)
-            child_context = context.next_turn()
-            if not trial.terminal:
-                if context.settles_after_action:
-                    trial.advance_round()
-                else:
-                    enemy = 1 - player
-                    enemy_bundles = self.build(trial, enemy, child_context, rerank=False)
-                    enemy_bundle = enemy_bundles[0] if enemy_bundles else ActionBundle(name="hold")
-                    trial.apply_operation_list(enemy, enemy_bundle.operations)
-                    if not trial.terminal:
-                        trial.advance_round()
-            rollout_value = self.feature_extractor.evaluate(trial, player, context=DecisionContext.for_player(player)) - baseline
-            reranked.append(ActionBundle(bundle.name, bundle.operations, bundle.score + rollout_value * 0.2, bundle.tags))
-        reranked.sort(key=lambda item: item.score, reverse=True)
-        if not reranked:
+        # 先利用我们强大的启发式分数对所有方案进行排序
+        bundles.sort(key=lambda item: item.score, reverse=True)
+        if not bundles:
             return [ActionBundle(name="hold")]
-        return reranked
+            
+        # 【截断式推演】：只取前 3 个最有希望的动作去克隆和模拟未来！
+        # 耗时依然极低，但拥有了防守反击和走位计算的“思考能力”
+        top_candidates = bundles[:3]
+        
+        for bundle in top_candidates:
+            if not bundle.operations:
+                continue
+            next_state = state.clone()
+            try:
+                # 在克隆的平行宇宙中执行这个动作，并向后演进一回合
+                next_state.apply_operations(player, bundle.operations)
+                next_state.step()
+                # 计算演进前后的局面分数差值，加到这个动作的总分里
+                if hasattr(self, '_evaluate_state'):
+                    bundle.score += self._evaluate_state(next_state, player) - self._evaluate_state(state, player)
+                else:
+                    bundle.score += self.feature_extractor.evaluate(next_state, player, context=DecisionContext.for_player(player)) - self.feature_extractor.evaluate(state, player, context=DecisionContext.for_player(player))
+            except Exception:
+                bundle.score = -9999.0
+                
+        # 重新根据推演后的真实分数排名
+        top_candidates.sort(key=lambda item: item.score, reverse=True)
+        return top_candidates
+            return [ActionBundle(name="hold")]
+            
+        # 【截断式推演】：只取前 3 个最有希望的动作去克隆和模拟未来！
+        # 耗时依然极低，但拥有了防守反击和走位计算的“思考能力”
+        top_candidates = bundles[:3]
+        
+        for bundle in top_candidates:
+            if not bundle.operations:
+                continue
+            next_state = state.clone()
+            try:
+                # 在克隆的平行宇宙中执行这个动作，并向后演进一回合
+                next_state.apply_operations(player, bundle.operations)
+                next_state.step()
+                # 计算演进前后的局面分数差值，加到这个动作的总分里
+                bundle.score += self._evaluate_state(next_state, player) - self._evaluate_state(state, player)
+            except Exception:
+                bundle.score = -9999.0
+                
+        # 重新根据推演后的真实分数排名
+        top_candidates.sort(key=lambda item: item.score, reverse=True)
+        return top_candidates
 
     def _local_enemy_pressure(self, state: BackendState, player: int, x: int, y: int) -> float:
         pressure = 0.0
@@ -273,9 +301,12 @@ class ActionCatalog:
         if tower_type in (TowerType.HEAVY, TowerType.HEAVY_PLUS, TowerType.BEWITCH):
             return local_density * 1.1 - forward_distance * 0.1
         if tower_type in (TowerType.ICE, TowerType.PULSE):
-            return local_density * 1.3
+            # 【战术升级】：极度偏好冰冻塔。只要有敌人，造冰冻塔的分数直接拉满！
+            return local_density * 2.5 + 5.0
         if tower_type in (TowerType.MORTAR, TowerType.MORTAR_PLUS, TowerType.MISSILE):
-            return local_density * 0.85 + max(0.0, 12 - forward_distance)
+            # 【优化】：把密度权重从 0.85 暴增到 1.8！
+            # 一旦感受到局部敌人兵线压力剧增，系统会疯狂倾向于升级范围伤害（AOE）塔。
+            return local_density * 1.8 + max(0.0, 12 - forward_distance)
         if tower_type in (TowerType.QUICK, TowerType.QUICK_PLUS, TowerType.DOUBLE):
             return local_density * 0.9 + 4.0
         if tower_type == TowerType.SNIPER:
@@ -301,30 +332,24 @@ class ActionCatalog:
         total = 0.0
         for ant in state.ants_of(enemy):
             distance = hex_distance(x, y, ant.x, ant.y)
-            if distance > stats.attack_range:
-                continue
-            immediate_damage = min(LIGHTNING_STORM_ANT_DAMAGE, ant.hp)
-            sustained_damage = min(ant.hp, LIGHTNING_STORM_ANT_DAMAGE * tower_strikes)
-            total += immediate_damage / max(ant.max_hp, 1) * (2.5 + ant.level)
-            total += sustained_damage / max(ant.max_hp, 1) * (0.8 + ant.level * 0.4)
-            if ant.hp <= LIGHTNING_STORM_ANT_DAMAGE:
-                total += ant.kill_reward
-            total += max(0.0, stats.attack_range + 1 - distance) * 0.2
-        for tower in state.towers_of(enemy):
-            distance = hex_distance(x, y, tower.x, tower.y)
-            if distance > stats.attack_range:
-                continue
-            projected_damage = min(tower.hp, LIGHTNING_STORM_TOWER_DAMAGE * tower_strikes)
-            total += projected_damage / max(tower.max_hp, 1) * (6.0 + tower.level * 2.5)
-            total += max(0.0, stats.attack_range + 1 - distance) * 0.15
-        return total - stats.cost * 0.03
-
+            if distance <= SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].attack_range:
+                # 【优化】：引入等级的平方倍率。敌方蚂蚁越硬（等级越高），这发闪电风暴就越值钱！
+                total += ant.kill_reward * 1.5 + (ant.level ** 2) * 5.0 + (4 - distance) * 0.5
+        return total - SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].cost * 0.03
+        
     def _emp_value(self, state: BackendState, player: int, x: int, y: int) -> float:
         total = 0.0
         for tower in state.towers_of(1 - player):
             distance = hex_distance(x, y, tower.x, tower.y)
             if distance <= SUPER_WEAPON_STATS[SuperWeaponType.EMP_BLASTER].attack_range:
-                total += 3.0 + tower.level * 2.5
+                # 【优化】：只对敌方的高级防御塔群（满级 3 级塔）给出极高的分数权重
+                # 宁可捏在手里不用，也绝不浪费在 1 级基础塔上。
+                if tower.level == 3:
+                    total += 25.0
+                elif tower.level == 2:
+                    total += 12.0
+                else:
+                    total += 2.0
         return total - SUPER_WEAPON_STATS[SuperWeaponType.EMP_BLASTER].cost * 0.025
 
     def _deflector_value(self, state: BackendState, player: int, x: int, y: int) -> float:
