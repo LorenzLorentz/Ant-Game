@@ -145,11 +145,13 @@ class TrainingLogger:
             },
         )
         self.logger.info(
-            "episode batch=%s episode=%s rounds=%s winner=%s reward_p0=%.4f reward_p1=%.4f",
+            "episode batch=%s episode=%s rounds=%s winner=%s trained_side=%s opponent=%s reward_p0=%.4f reward_p1=%.4f",
             batch_index,
             episode_index,
             payload.get("rounds"),
             payload.get("winner"),
+            payload.get("trained_side"),
+            payload.get("opponent_kind"),
             float(payload.get("reward_player_0", 0.0)),
             float(payload.get("reward_player_1", 0.0)),
         )
@@ -163,12 +165,16 @@ class TrainingLogger:
             },
         )
         self.logger.info(
-            "batch=%s policy_loss=%.4f value_loss=%.4f entropy=%.4f eval_win_rate=%.4f selfplay_rounds=%.2f batch_elapsed=%.1fs samples=%s",
+            "batch=%s policy_loss=%.4f value_loss=%.4f entropy=%.4f eval_win_rate=%.4f promote_win_rate=%.4f promoted=%s vs_heuristic=%.4f vs_champion=%.4f selfplay_rounds=%.2f batch_elapsed=%.1fs samples=%s",
             batch_index,
             float(payload.get("policy_loss", 0.0)),
             float(payload.get("value_loss", 0.0)),
             float(payload.get("entropy", 0.0)),
             float(payload.get("eval_win_rate", 0.0)),
+            float(payload.get("promotion_win_rate", 0.0)),
+            int(payload.get("champion_promoted", 0.0)),
+            float(payload.get("matchup_heuristic_win_rate", 0.0)),
+            float(payload.get("matchup_champion_win_rate", 0.0)),
             float(payload.get("mean_episode_rounds", 0.0)),
             float(payload.get("batch_elapsed_s", 0.0)),
             payload.get("samples"),

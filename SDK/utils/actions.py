@@ -19,6 +19,7 @@ from SDK.utils.constants import (
     TOWER_STATS,
     TOWER_UPGRADE_TREE,
     TowerType,
+    VALID_CELLS,
 )
 from SDK.utils.features import FeatureExtractor
 from SDK.utils.geometry import hex_distance
@@ -163,8 +164,11 @@ class ActionCatalog:
         enemy_towers = state.towers_of(enemy)
 
         if (enemy_ants or enemy_towers) and state.weapon_cooldowns[player, SuperWeaponType.LIGHTNING_STORM] == 0 and state.coins[player] >= SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].cost:
-            centers = {(ant.x, ant.y) for ant in enemy_ants}
-            centers.update((tower.x, tower.y) for tower in enemy_towers)
+            centers = self._candidate_centers(
+                [(ant.x, ant.y) for ant in enemy_ants],
+                [(tower.x, tower.y) for tower in enemy_towers],
+                PLAYER_BASES[enemy],
+            )
             best = max(
                 ((x, y, self._storm_value(state, player, x, y)) for x, y in centers),
                 key=lambda item: item[2],
@@ -176,7 +180,11 @@ class ActionCatalog:
                     results.append(ActionBundle(f"storm@{best[0]},{best[1]}", (op,), best[2], ("weapon", "storm")))
 
         if enemy_towers and state.weapon_cooldowns[player, SuperWeaponType.EMP_BLASTER] == 0 and state.coins[player] >= SUPER_WEAPON_STATS[SuperWeaponType.EMP_BLASTER].cost:
-            centers = {(tower.x, tower.y) for tower in enemy_towers}
+            centers = self._candidate_centers(
+                [(tower.x, tower.y) for tower in enemy_towers],
+                [(ant.x, ant.y) for ant in enemy_ants[:6]],
+                PLAYER_BASES[enemy],
+            )
             scored = [
                 (x, y, self._emp_value(state, player, x, y))
                 for x, y in centers
@@ -188,8 +196,16 @@ class ActionCatalog:
                     results.append(ActionBundle(f"emp@{best[0]},{best[1]}", (op,), best[2], ("weapon", "emp")))
 
         if my_ants and state.weapon_cooldowns[player, SuperWeaponType.DEFLECTOR] == 0 and state.coins[player] >= SUPER_WEAPON_STATS[SuperWeaponType.DEFLECTOR].cost:
+            candidate_ants = sorted(
+                my_ants,
+                key=lambda ant: (hex_distance(ant.x, ant.y, *PLAYER_BASES[enemy]), -ant.hp),
+            )[:10]
+            centers = self._candidate_centers(
+                [(ant.x, ant.y) for ant in candidate_ants],
+                [PLAYER_BASES[player]],
+            )
             best = max(
-                ((ant.x, ant.y, self._deflector_value(state, player, ant.x, ant.y)) for ant in my_ants),
+                ((x, y, self._deflector_value(state, player, x, y)) for x, y in centers),
                 key=lambda item: item[2],
                 default=None,
             )
@@ -199,8 +215,19 @@ class ActionCatalog:
                     results.append(ActionBundle(f"deflect@{best[0]},{best[1]}", (op,), best[2], ("weapon", "shield")))
 
         if my_ants and state.weapon_cooldowns[player, SuperWeaponType.EMERGENCY_EVASION] == 0 and state.coins[player] >= SUPER_WEAPON_STATS[SuperWeaponType.EMERGENCY_EVASION].cost:
+            threatened_ants = sorted(
+                my_ants,
+                key=lambda ant: (
+                    -self._local_enemy_pressure(state, player, ant.x, ant.y),
+                    hex_distance(ant.x, ant.y, *PLAYER_BASES[enemy]),
+                ),
+            )[:10]
+            centers = self._candidate_centers(
+                [(ant.x, ant.y) for ant in threatened_ants],
+                [PLAYER_BASES[player]],
+            )
             best = max(
-                ((ant.x, ant.y, self._evasion_value(state, player, ant.x, ant.y)) for ant in my_ants),
+                ((x, y, self._evasion_value(state, player, x, y)) for x, y in centers),
                 key=lambda item: item[2],
                 default=None,
             )
@@ -213,11 +240,17 @@ class ActionCatalog:
 
     def _paired_candidates(self, state: BackendState, player: int, singles: list[ActionBundle]) -> list[ActionBundle]:
         results: list[ActionBundle] = []
-        left = [bundle for bundle in singles if bundle.tags and bundle.tags[0] in {"sell", "build", "upgrade", "base"}]
-        left = sorted(left, key=lambda item: item.score, reverse=True)[:8]
+        left = [
+            bundle
+            for bundle in singles
+            if bundle.tags and bundle.tags[0] in {"sell", "build", "upgrade", "base", "weapon"}
+        ]
+        left = sorted(left, key=lambda item: item.score, reverse=True)[:10]
         for first in left:
             for second in left:
                 if first is second:
+                    continue
+                if "weapon" in first.tags and "weapon" in second.tags:
                     continue
                 operations = first.operations + second.operations
                 if len(operations) > 2:
@@ -226,7 +259,7 @@ class ActionCatalog:
                 invalid_ops = trial.apply_operation_list(player, operations)
                 if invalid_ops:
                     continue
-                score = first.score + second.score * 0.9
+                score = first.score + second.score * 0.9 + self._combo_bonus(first, second)
                 name = f"{first.name}+{second.name}"
                 results.append(ActionBundle(name=name, operations=tuple(operations), score=score, tags=("combo",)))
         return results
@@ -245,49 +278,69 @@ class ActionCatalog:
             
         # 【截断式推演】：只取前 3 个最有希望的动作去克隆和模拟未来！
         # 耗时依然极低，但拥有了防守反击和走位计算的“思考能力”
-        top_candidates = bundles[:3]
+        top_candidates = bundles[:4]
         
         for bundle in top_candidates:
             if not bundle.operations:
                 continue
             next_state = state.clone()
             try:
-                # 在克隆的平行宇宙中执行这个动作，并向后演进一回合
-                next_state.apply_operations(player, bundle.operations)
-                next_state.step()
-                # 计算演进前后的局面分数差值，加到这个动作的总分里
-                if hasattr(self, '_evaluate_state'):
-                    bundle.score += self._evaluate_state(next_state, player) - self._evaluate_state(state, player)
+                sim_context = context
+                invalid_ops = next_state.apply_operation_list(player, bundle.operations)
+                if invalid_ops:
+                    bundle.score = -9999.0
+                    continue
+                if sim_context.settles_after_action:
+                    next_state.advance_round()
+                    next_context = sim_context.next_turn()
                 else:
-                    bundle.score += self.feature_extractor.evaluate(next_state, player, context=DecisionContext.for_player(player)) - self.feature_extractor.evaluate(state, player, context=DecisionContext.for_player(player))
+                    next_context = sim_context.next_turn()
+                current_value = self.feature_extractor.evaluate(state, player, context=sim_context)
+                future_value = self.feature_extractor.evaluate(next_state, player, context=next_context)
+                bundle.score += future_value - current_value
             except Exception:
                 bundle.score = -9999.0
                 
         # 重新根据推演后的真实分数排名
         top_candidates.sort(key=lambda item: item.score, reverse=True)
         return top_candidates
-            return [ActionBundle(name="hold")]
-            
-        # 【截断式推演】：只取前 3 个最有希望的动作去克隆和模拟未来！
-        # 耗时依然极低，但拥有了防守反击和走位计算的“思考能力”
-        top_candidates = bundles[:3]
-        
-        for bundle in top_candidates:
-            if not bundle.operations:
-                continue
-            next_state = state.clone()
-            try:
-                # 在克隆的平行宇宙中执行这个动作，并向后演进一回合
-                next_state.apply_operations(player, bundle.operations)
-                next_state.step()
-                # 计算演进前后的局面分数差值，加到这个动作的总分里
-                bundle.score += self._evaluate_state(next_state, player) - self._evaluate_state(state, player)
-            except Exception:
-                bundle.score = -9999.0
-                
-        # 重新根据推演后的真实分数排名
-        top_candidates.sort(key=lambda item: item.score, reverse=True)
-        return top_candidates
+
+    def _candidate_centers(
+        self,
+        primary_points: list[tuple[int, int]],
+        extra_points: list[tuple[int, int]] | None = None,
+        anchor: tuple[int, int] | None = None,
+    ) -> set[tuple[int, int]]:
+        centers: set[tuple[int, int]] = set()
+        points = list(primary_points)
+        if extra_points:
+            points.extend(extra_points)
+        if anchor is not None:
+            points.append(anchor)
+        for x, y in points:
+            for cx, cy in VALID_CELLS:
+                if hex_distance(x, y, cx, cy) <= 1:
+                    centers.add((cx, cy))
+        if anchor is not None:
+            centers.add(anchor)
+        return centers
+
+    def _combo_bonus(self, first: ActionBundle, second: ActionBundle) -> float:
+        first_tags = set(first.tags)
+        second_tags = set(second.tags)
+        if "sell" in first_tags and "upgrade" in second_tags:
+            return 1.5
+        if "sell" in second_tags and "upgrade" in first_tags:
+            return 1.5
+        if "weapon" in first_tags and "build" in second_tags:
+            return 1.0
+        if "weapon" in second_tags and "build" in first_tags:
+            return 1.0
+        if "base" in first_tags and "build" in second_tags:
+            return 1.0
+        if "base" in second_tags and "build" in first_tags:
+            return 1.0
+        return 0.0
 
     def _local_enemy_pressure(self, state: BackendState, player: int, x: int, y: int) -> float:
         pressure = 0.0
@@ -335,6 +388,15 @@ class ActionCatalog:
             if distance <= SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].attack_range:
                 # 【优化】：引入等级的平方倍率。敌方蚂蚁越硬（等级越高），这发闪电风暴就越值钱！
                 total += ant.kill_reward * 1.5 + (ant.level ** 2) * 5.0 + (4 - distance) * 0.5
+        for tower in state.towers_of(enemy):
+            distance = hex_distance(x, y, tower.x, tower.y)
+            if distance <= stats.attack_range:
+                projected_damage = min(
+                    tower.max_hp,
+                    tower_strikes * LIGHTNING_STORM_TOWER_DAMAGE,
+                )
+                tower_value = projected_damage * 1.8 + tower.level * 4.0
+                total += tower_value + (4 - distance) * 0.4
         return total - SUPER_WEAPON_STATS[SuperWeaponType.LIGHTNING_STORM].cost * 0.03
         
     def _emp_value(self, state: BackendState, player: int, x: int, y: int) -> float:

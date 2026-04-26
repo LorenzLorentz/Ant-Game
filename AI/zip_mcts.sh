@@ -11,9 +11,11 @@ cp AI/protocol.py submissions/mcts_temp/ 2>/dev/null || true
 cp AI/common.py submissions/mcts_temp/ 2>/dev/null || true
 cp -r SDK submissions/mcts_temp/
 
-# 【打包 Numpy 权重文件】
-if [ -f "model_weights.npz" ]; then
-    cp model_weights.npz submissions/mcts_temp/
+# Package the trained checkpoint under the name the agent looks for first.
+if [ -f "AI/ai_mcts_model.npz" ]; then
+    cp AI/ai_mcts_model.npz submissions/mcts_temp/
+elif [ -f "checkpoints/ai_mcts_latest.npz" ]; then
+    cp checkpoints/ai_mcts_latest.npz submissions/mcts_temp/ai_mcts_model.npz
 fi
 
 echo "numpy" > submissions/mcts_temp/requirements.txt
